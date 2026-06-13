@@ -541,7 +541,7 @@ function itemHtml(a, i) {
       ${(a.tags || []).length ? `<div class="item-tags">${a.tags.slice(0, 3).map((t) =>
         `<span class="item-tag" data-tag="${esc(t)}">${esc(t)}</span>`).join("")}</div>` : ""}
     </div>
-    ${a.image ? `<div class="item-thumb"><img src="${esc(a.image)}" alt="" loading="lazy" onerror="this.parentNode.remove()"></div>` : ""}
+    ${a.image ? `<div class="item-thumb"><img src="${esc(a.image)}" alt="" loading="lazy"></div>` : ""}
     ${progress}
   </article>`;
 }
@@ -1291,6 +1291,16 @@ function applyTheme(theme, animate = true, origin = null) {
 }
 $("#btn-theme").addEventListener("click", (e) =>
   applyTheme(S.theme === "dark" ? "light" : "dark", true, e.currentTarget));
+
+/* broken images: CSP (script-src 'self') blocks inline onerror, so handle load
+   failures centrally. The error event doesn't bubble → listen in capture phase. */
+document.addEventListener("error", (e) => {
+  const el = e.target;
+  if (!el || el.tagName !== "IMG") return;
+  const thumb = el.closest(".item-thumb");
+  if (thumb) thumb.remove();        // list: drop the broken thumbnail box
+  else el.style.display = "none";   // reader body: hide the broken image
+}, true);
 
 /* ── sidebar (mobile) ────────────────────────────── */
 

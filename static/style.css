@@ -477,7 +477,7 @@ svg { display: block; }
 .summary-text { font-family: var(--font-serif-zh); font-size: 15.5px; line-height: 1.95; color: var(--text); }
 .summary-card.loading .summary-text { color: var(--text-3); }
 
-.prose { margin-top: 26px; font-family: var(--font-prose); font-size: var(--prose-font, 17px); line-height: var(--prose-lh, 1.85); color: color-mix(in srgb, var(--text) 94%, transparent); }
+.prose { margin-top: 26px; font-family: var(--font-prose); font-size: var(--prose-font, 17px); line-height: var(--prose-lh, 1.85); color: color-mix(in srgb, var(--text) 94%, transparent); overflow-wrap: anywhere; }
 .prose p, .prose ul, .prose ol, .prose table { margin: 0 0 1.25em; }
 .prose ul, .prose ol { padding-left: 1.4em; }
 .prose li { margin-bottom: .4em; }
@@ -496,7 +496,7 @@ svg { display: block; }
 
 /* bilingual blocks — stacked by default */
 .blk { margin-bottom: 1.5em; animation: fade-up .5s var(--ease-spring) backwards; animation-delay: calc(min(var(--i, 0), 16) * 45ms); }
-.blk-en { font-family: var(--font-prose); font-size: var(--prose-font, 17px); line-height: var(--prose-lh, 1.8); color: color-mix(in srgb, var(--text) 94%, transparent); }
+.blk-en { font-family: var(--font-prose); font-size: var(--prose-font, 17px); line-height: var(--prose-lh, 1.8); color: color-mix(in srgb, var(--text) 94%, transparent); overflow-wrap: anywhere; }
 .blk-en.is-h { font-family: var(--font-text); font-weight: 680; font-size: 21px; letter-spacing: -.015em; margin-top: 1.2em; }
 .blk-zh {
   margin-top: .65em;
@@ -504,6 +504,7 @@ svg { display: block; }
   color: var(--zh);
   padding: .1em 0 .1em 17px;
   border-left: 2px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  overflow-wrap: anywhere;
 }
 .blk-zh.is-h { font-weight: 600; font-size: 18.5px; }
 
@@ -511,7 +512,7 @@ svg { display: block; }
    (container query → responds to panel width, not viewport) */
 .reader-scroll { container-type: inline-size; }
 @container (min-width: 900px) {
-  .bilingual .blk { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 40px; align-items: start; margin-bottom: 1.15em; }
+  .bilingual .blk { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 40px; align-items: start; margin-bottom: 1.15em; }
   .bilingual .blk-zh { margin-top: 0; padding-left: 0; border-left: 0; }
   .bilingual .blk-en { padding-right: 40px; border-right: 1px solid var(--line); }
   .bilingual .blk-en.is-h, .bilingual .blk-zh.is-h,
