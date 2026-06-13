@@ -1395,8 +1395,38 @@ function openSettings() {
     `<option value="${c}">${CAT_LABEL[c][0]} ${CAT_LABEL[c][1]}</option>`).join("");
   renderFeedList();
   renderMuteList();
+  renderEngines();
 }
 function closeSettings() { $("#settings").classList.add("hidden"); }
+
+const ENGINE_FEATURES = [
+  { key: "digest", name: "今日简报" },
+  { key: "summary", name: "AI 摘要" },
+  { key: "translate", name: "翻译" },
+];
+function renderEngines() {
+  const eng = S.state.engines || {};
+  const labels = S.state.engine_labels || { deepseek: "DeepSeek", gpt55: "GPT-5.5" };
+  const opts = Object.keys(labels);
+  $("#engine-list").innerHTML = ENGINE_FEATURES.map((f) => `
+    <div class="engine-row">
+      <span class="engine-name">${f.name}</span>
+      <div class="engine-seg">
+        ${opts.map((o) => `<button class="eng-btn${eng[f.key] === o ? " active" : ""}" data-feat="${f.key}" data-engine="${o}">${esc(labels[o])}</button>`).join("")}
+      </div>
+    </div>`).join("");
+}
+$("#engine-list").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-feat]");
+  if (!btn || btn.classList.contains("active")) return;
+  try {
+    await api("/api/settings/engine", { method: "POST",
+      body: { feature: btn.dataset.feat, engine: btn.dataset.engine } });
+    (S.state.engines ||= {})[btn.dataset.feat] = btn.dataset.engine;
+    renderEngines();
+    toast(`${esc(btn.textContent)} · 已切换`);
+  } catch (err) { toast(`切换失败：${esc(err.message)}`); }
+});
 
 function renderMuteList() {
   const mutes = S.state.mutes || [];

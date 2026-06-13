@@ -77,7 +77,10 @@ async def generate(day: str, force: bool = False) -> dict[str, Any]:
         sections = await asyncio.to_thread(_collect_sections)
         if not sections:
             raise ValueError("no articles in the last 24h")
-        data = await translate.make_digest(sections)
+        with db.get_db() as conn:
+            engine = db.get_meta(conn, "engine:digest",
+                                 config.AI_ENGINES_DEFAULT["digest"])
+        data = await translate.make_digest(sections, engine=engine)
         data["generated_at"] = int(time.time())
         data["day"] = day
         with db.get_db() as conn:

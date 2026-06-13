@@ -12,7 +12,7 @@ import httpx
 import trafilatura
 
 from . import config
-from .sanitize import sanitize_html
+from .sanitize import sanitize_html, strip_tags
 
 log = logging.getLogger("meridian.extract")
 
@@ -153,7 +153,65 @@ async def _jina_fallback(url: str, client: httpx.AsyncClient) -> str:
         md = md.split("Markdown Content:", 1)[1]
     if len(md.strip()) < 300:
         return ""
-    return sanitize_html(markdown_to_html(md))
+    html = sanitize_html(markdown_to_html(md))
+    if _is_consent_wall(html):  # the render proxy hit the same cookie wall
+        return ""
+    return html
+
+
+# Post-extraction cleanup: trafilatura's balanced mode keeps article-adjacent
+# affiliate ads, isolated section labels, and site chrome. Strip the worst of
+# it before the body is stored / translated — noise here also wastes DeepSeek
+# tokens, since split_blocks would otherwise hand it to the translator.
+_LABEL_JUNK = re.compile(
+    r"<(p|h[2-4])\b[^>]*>\s*(?:Summary|Quick Read|Key Points|Key Takeaways|"
+    r"Advertisement|Read More)\s*</\1>", re.I)
+_AD_CTA = re.compile(
+    r"<(p|li)\b[^>]*>(?:(?!</\1>).)*?"
+    r"(?:Grab the names FREE|named his top \d+|the analyst who called|"
+    r"We just covered the)"
+    r"(?:(?!</\1>).)*?</\1>", re.I | re.S)
+# Affiliate stock-tip farms Yahoo aggregates inline. Drop a list item that is
+# wholly such a link, and any anchor pointing at one (bare <a>…Click Here</a>
+# that floats outside a paragraph), without nuking a real paragraph it sits in.
+_AD_HOSTS = r"247wallst\.com|insidermonkey\.com"
+_AD_LINK = re.compile(
+    rf"<li\b[^>]*>(?:(?!</li>).)*?(?:{_AD_HOSTS})(?:(?!</li>).)*?</li>", re.I | re.S)
+_AD_ANCHOR = re.compile(
+    rf'<a\b[^>]*href="[^"]*(?:{_AD_HOSTS})[^"]*"[^>]*>.*?</a>', re.I | re.S)
+_CNBC_CHART = re.compile(r"\b[A-Z]{1,6} YTD mountain [A-Z]{1,6} YTD chart\b")
+_HF_CHROME = re.compile(
+    r"<p\b[^>]*>(?:(?!</p>).)*?"
+    r"(?:Enterprise Article|Upvote \d|Published [A-Z][a-z]+ \d)"
+    r"(?:(?!</p>).)*?</p>", re.I | re.S)
+_EMPTY_ANCHOR = re.compile(r"<a\b[^>]*>\s*</a>")
+
+# Cookie-consent walls (Didomi etc.) that trafilatura mistakes for the article
+# body — they sail past the length gate, so detect them and fall through to Jina.
+_CONSENT_MARKERS = (
+    "we and our partners use cookies",
+    "accept deny customize",
+    "your personal data, your options",
+)
+
+
+def _clean_extracted(html: str, host: str) -> str:
+    if not html:
+        return html
+    html = _LABEL_JUNK.sub("", html)
+    html = _AD_CTA.sub("", html)
+    html = _AD_LINK.sub("", html)
+    html = _AD_ANCHOR.sub("", html)
+    html = _CNBC_CHART.sub("", html)
+    if "huggingface.co" in host:
+        html = _HF_CHROME.sub("", html)
+        html = _EMPTY_ANCHOR.sub("", html)
+    return html.strip()
+
+
+def _is_consent_wall(html: str) -> bool:
+    text = strip_tags(html).lower()
+    return any(marker in text for marker in _CONSENT_MARKERS)
 
 
 async def fetch_fulltext(url: str) -> str:
@@ -196,8 +254,11 @@ async def fetch_fulltext(url: str) -> str:
                     return ""
 
             extracted = await asyncio.to_thread(_extract)
-            if len(extracted) >= 200:
-                return sanitize_html(extracted)
+            if extracted:
+                host = (urlparse(url).hostname or "").lower()
+                polished = _clean_extracted(sanitize_html(extracted), host)
+                if len(polished) >= 200 and not _is_consent_wall(polished):
+                    return polished
 
-        # bot wall / JS-only page — try the rendering proxy before giving up
+        # bot wall / consent wall / JS-only page — try the rendering proxy
         return await _jina_fallback(url, client)

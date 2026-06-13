@@ -24,6 +24,21 @@ def _safe_url(value: str) -> bool:
     return bool(_SAFE_URL.match(value.strip()))
 
 
+# Decorative emoji sprites and 1×1 tracking pixels that some feeds inline as
+# <img>. They inflate the image count, render as junk in the reader, and — for
+# emoji — fool merge_lost_images into thinking the body already has a real
+# picture (so the genuine RSS hero never gets prepended).
+_IMG_SRC_BLOCKLIST = (
+    "s.w.org/images/core/emoji",              # WordPress emoji sprites (e.g. 爱范儿)
+    "media.npr.org/include/images/tracking",  # NPR RSS tracking pixel
+)
+
+
+def _blocked_img_src(src: str) -> bool:
+    low = src.lower()
+    return any(frag in low for frag in _IMG_SRC_BLOCKLIST)
+
+
 class _Sanitizer(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -38,6 +53,10 @@ class _Sanitizer(HTMLParser):
             return
         if self.skip_depth or tag not in ALLOWED_TAGS:
             return
+        if tag == "img":
+            src = next((v for n, v in attrs if n == "src" and v), "")
+            if not _safe_url(src) or _blocked_img_src(src):
+                return  # drop tracking pixel / emoji sprite / src-less <img>
         kept: list[str] = []
         for name, value in attrs:
             if value is None:

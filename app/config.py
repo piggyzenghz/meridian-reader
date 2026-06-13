@@ -22,6 +22,24 @@ DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
 # Daily DeepSeek token budget (sum of total_tokens). Hard gate against runaway cost.
 DAILY_TOKEN_BUDGET = int(os.environ.get("MERIDIAN_DAILY_TOKEN_BUDGET", "3000000"))
 
+# Secondary AI provider — any OpenAI-compatible chat endpoint. Used for the
+# digest / summary while DeepSeek handles translation. Point these at your
+# gateway via the env; the default base is a local gateway and the key is unset,
+# so an unconfigured deployment cleanly falls back to DeepSeek.
+SUB2API_BASE_URL = os.environ.get("SUB2API_BASE_URL", "http://localhost:8080/v1")
+SUB2API_API_KEY = os.environ.get("SUB2API_API_KEY", "")
+SUB2API_MODEL = os.environ.get("SUB2API_MODEL", "gpt-5.5")
+
+# Per-feature AI engine. Persisted in the meta table via the settings UI; these
+# are the defaults. Engine ids: "deepseek" | "gpt55".
+AI_FEATURES = ("digest", "summary", "translate")
+AI_ENGINES_DEFAULT = {
+    "digest": os.environ.get("MERIDIAN_ENGINE_DIGEST", "gpt55"),
+    "summary": os.environ.get("MERIDIAN_ENGINE_SUMMARY", "gpt55"),
+    "translate": os.environ.get("MERIDIAN_ENGINE_TRANSLATE", "deepseek"),
+}
+AI_ENGINE_LABELS = {"deepseek": "DeepSeek", "gpt55": "GPT-5.5"}
+
 FETCH_INTERVAL_MIN = int(os.environ.get("MERIDIAN_FETCH_INTERVAL_MIN", "30"))
 FETCH_CONCURRENCY = 8
 FETCH_TIMEOUT = 25.0
@@ -85,7 +103,17 @@ PAYWALL_DOMAINS = (
 #   • x.com / twitter.com: the RSS (via RSSHub) already holds the full tweet
 #     text AND its pbs.twimg images; fetching x.com hits a login wall that
 #     extracts nothing and wipes the tweet's own images.
-NO_EXTRACT_DOMAINS = ("wallstreetcn.com", "awtmt.com", "x.com", "twitter.com")
+# france24.com is also here for a different reason: its page extraction returns
+# a Didomi cookie-consent wall (server-rendered, so the Jina proxy hits it too).
+# Skipping extraction falls back to the RSS body, which carries a real summary.
+NO_EXTRACT_DOMAINS = ("wallstreetcn.com", "awtmt.com", "x.com", "twitter.com",
+                      "france24.com")
+
+# Path fragments (any host) whose pages are video players or live-blogs:
+# extraction only scrapes the surrounding nav + related-video rail (BBC
+# /news/videos/, Al Jazeera /video/, NYT /live/), so skip it and keep the RSS
+# summary instead of a wall of unrelated chrome.
+NO_EXTRACT_PATHS = ("/news/videos/", "/av/", "/video/", "/live/")
 
 # (url, title, category) — curated launch set, every URL verified reachable.
 # v1.1 (6-12): dropped hard-paywall feeds (WSJ/FT/Economist), added open

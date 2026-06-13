@@ -97,6 +97,36 @@ def _scrub_url(url: str) -> str:
     return re.sub(r"([?&](?:access_)?key=)[^&\s]+", r"\1***", url, flags=re.IGNORECASE)
 
 
+# --- Post-sanitize body polish -------------------------------------------
+# Run on the SANITIZED RSS body (well-formed markup) to strip chrome the
+# upstream feed bakes in. Each regex is a no-op on sources that don't carry
+# that pattern, so _polish_rss_body is safe to run on every body.
+#   • Twitter-RSS (xgo.ing) engagement clusters: <span><span>❤️</span><span>7
+#     </span></span>… and the trailing empty <a href="https://xgo.ing"> </a>.
+#   • Newsletter/WordPress boilerplate paragraphs ("… appeared first on …",
+#     "This is today's edition of …").
+_ENGAGEMENT_SPANS = re.compile(
+    r"(?:<span><span>[💬🔁🔄❤👀📊🖼♥️]{1,3}</span>"
+    r"<span>[\d,.KkMm]+</span></span>)+")
+_XGO_LINK = re.compile(
+    r'<a\b[^>]*href="https?://xgo\.ing[^"]*"[^>]*>.*?</a>', re.I | re.S)
+_EMPTY_ANCHOR = re.compile(r"<a\b[^>]*>\s*</a>")
+_BOILERPLATE_P = re.compile(
+    r"<p\b[^>]*>(?:(?!</p>).)*?"
+    r"(?:appeared first on|this is today[’']s edition of)"
+    r"(?:(?!</p>).)*?</p>", re.I | re.S)
+
+
+def _polish_rss_body(html: str) -> str:
+    if not html:
+        return html
+    html = _ENGAGEMENT_SPANS.sub("", html)
+    html = _XGO_LINK.sub("", html)
+    html = _BOILERPLATE_P.sub("", html)
+    html = _EMPTY_ANCHOR.sub("", html)  # leftover image/video placeholder anchors
+    return html.strip()
+
+
 def parse_and_store(feed_id: int, body: bytes, conn: sqlite3.Connection) -> int:
     """Parse a feed payload and insert new articles. Returns inserted count."""
     parsed = feedparser.parse(body)
@@ -112,7 +142,8 @@ def parse_and_store(feed_id: int, body: bytes, conn: sqlite3.Connection) -> int:
         if not link.startswith(("http://", "https://")):
             link = ""  # never store a javascript:/data: link for the UI to open
         raw_content = _entry_content(entry)
-        content = sanitize_html(_clean_noise(raw_content))  # HTML: only emoji/noise
+        # HTML body: strip emoji/noise, sanitize, then polish feed chrome.
+        content = _polish_rss_body(sanitize_html(_clean_noise(raw_content)))
         plain = _clean_text_field(strip_tags(raw_content))
         summary = (_clean_text_field(strip_tags(entry.get("summary", ""))) or plain)[:360]
         title = _clean_text_field(strip_tags(entry.get("title", "")))[:500]

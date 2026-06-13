@@ -601,6 +601,14 @@ svg { display: block; }
 .mute-box { padding: 14px 22px 6px; border-bottom: 1px solid var(--line); }
 .mute-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); margin-bottom: 10px; }
 .mute-head svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; }
+.engine-box { padding: 14px 22px 10px; border-bottom: 1px solid var(--line); }
+.engine-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); margin-bottom: 12px; }
+.engine-head svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; }
+.engine-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+.engine-name { font-size: 13px; color: var(--text); }
+.engine-seg { display: flex; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 2px; }
+.eng-btn { padding: 5px 13px; border-radius: 8px; font-size: 12.5px; font-weight: 560; color: var(--text-3); transition: all .18s; cursor: pointer; }
+.eng-btn.active { background: var(--surface-2); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.18); }
 .mute-add { display: flex; gap: 9px; }
 .mute-add input { flex: 1; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 11px; padding: 8px 13px; font-size: 13px; }
 .mute-add input:focus { outline: none; border-color: var(--accent); }

@@ -140,6 +140,8 @@ async def state() -> dict[str, Any]:
             "SELECT id, pattern FROM mutes ORDER BY created_at").fetchall()]
         last_refresh = int(db.get_meta(conn, "last_refresh", "0"))
         used = db.tokens_today(conn, time.strftime("%Y-%m-%d"))
+        engines = {f: db.get_meta(conn, f"engine:{f}", config.AI_ENGINES_DEFAULT[f])
+                   for f in config.AI_FEATURES}
     tags = [{"tag": t, "count": tag_counts.get(t, 0)}
             for t in config.TAXONOMY if tag_counts.get(t, 0) > 0]
     return {
@@ -148,6 +150,8 @@ async def state() -> dict[str, Any]:
         "tags": tags,
         "monitors": monitors,
         "mutes": mutes,
+        "engines": engines,
+        "engine_labels": config.AI_ENGINE_LABELS,
         "digest_ready": digest.get_cached(digest.today_key()) is not None,
         "categories": config.CATEGORIES,
         "category_labels": config.CATEGORY_LABELS,
@@ -272,10 +276,22 @@ def _is_paywalled(link: str) -> bool:
 
 
 def _no_extract(link: str) -> bool:
-    """Sources whose RSS already carries the full text — extracting their web
-    page only pulls in nav/footer/markets noise (e.g. 华尔街见闻 快讯)."""
-    host = (urlparse(link).hostname or "").lower()
-    return any(host == d or host.endswith("." + d) for d in config.NO_EXTRACT_DOMAINS)
+    """Skip extraction when the RSS already carries the full text (华尔街见闻
+    快讯), or the page is a video/live-blog whose extraction is all nav noise."""
+    parsed = urlparse(link)
+    host = (parsed.hostname or "").lower()
+    if any(host == d or host.endswith("." + d) for d in config.NO_EXTRACT_DOMAINS):
+        return True
+    path = (parsed.path or "").lower()
+    return any(frag in path for frag in config.NO_EXTRACT_PATHS)
+
+
+def _engine_for(feature: str) -> str:
+    """The AI engine chosen for a feature (digest/summary/translate), falling
+    back to the configured default. Persisted in the meta table."""
+    with db.get_db() as conn:
+        return db.get_meta(conn, f"engine:{feature}",
+                           config.AI_ENGINES_DEFAULT.get(feature, "deepseek"))
 
 
 def _src_hash(content: str) -> str:
@@ -580,7 +596,7 @@ async def translate_article(article_id: int) -> Any:
     if todo:
         try:
             translated = await translate.translate_segments(
-                [blocks[i]["x"] for i in todo])
+                [blocks[i]["x"] for i in todo], engine=_engine_for("translate"))
         except Exception as exc:
             return _translate_error(exc)
         for idx, zh in zip(todo, translated):
@@ -603,7 +619,8 @@ async def summarize_article(article_id: int) -> Any:
     if len(text) < 80:
         raise HTTPException(400, "article too short to summarize")
     try:
-        summary = await translate.summarize(article["title"], text)
+        summary = await translate.summarize(article["title"], text,
+                                            engine=_engine_for("summary"))
     except Exception as exc:
         return _translate_error(exc)
     with db.get_db() as conn:
@@ -637,7 +654,8 @@ async def translate_titles(body: TitlesIn) -> Any:
             result[row["id"]] = ""
     if todo:
         try:
-            translated = await translate.translate_titles([t for _, t in todo])
+            translated = await translate.translate_titles(
+                [t for _, t in todo], engine=_engine_for("translate"))
         except Exception as exc:
             return _translate_error(exc)
         with db.get_db() as conn:
@@ -656,10 +674,28 @@ class PhraseIn(BaseModel):
 async def translate_phrase(body: PhraseIn) -> Any:
     """Translate a selected word / phrase / sentence (selection popover)."""
     try:
-        result = await translate.translate_phrase(body.text.strip())
+        result = await translate.translate_phrase(body.text.strip(),
+                                                  engine=_engine_for("translate"))
     except Exception as exc:
         return _translate_error(exc)
     return result
+
+
+class EngineIn(BaseModel):
+    feature: str
+    engine: str
+
+
+@app.post("/api/settings/engine", dependencies=[protected])
+async def set_engine(body: EngineIn) -> dict[str, Any]:
+    """Switch the AI engine (deepseek/gpt55) used for digest / summary / translate."""
+    if body.feature not in config.AI_FEATURES:
+        raise HTTPException(400, "unknown feature")
+    if body.engine not in config.AI_ENGINE_LABELS:
+        raise HTTPException(400, "unknown engine")
+    with db.get_db() as conn:
+        db.set_meta(conn, f"engine:{body.feature}", body.engine)
+    return {"feature": body.feature, "engine": body.engine}
 
 
 # ---------------------------------------------------------------- markets

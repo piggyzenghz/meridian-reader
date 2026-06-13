@@ -42,28 +42,46 @@ def _record_usage(tokens: int) -> None:
         db.add_usage(conn, _today(), tokens)
 
 
+def _provider(engine: str) -> dict[str, Any]:
+    """Resolve an engine id to endpoint/model/key. Read at call time so a key
+    added to the env after import is still picked up. gpt55 = the secondary
+    OpenAI-compatible provider (no DeepSeek-style thinking param)."""
+    if engine == "gpt55":
+        return {"name": "gpt55", "base_url": config.SUB2API_BASE_URL,
+                "key": config.SUB2API_API_KEY, "model": config.SUB2API_MODEL,
+                "thinking_off": False}
+    return {"name": "deepseek", "base_url": config.DEEPSEEK_BASE_URL,
+            "key": config.DEEPSEEK_API_KEY, "model": config.DEEPSEEK_MODEL,
+            "thinking_off": True}
+
+
 async def _chat(messages: list[dict[str, str]], max_tokens: int,
-                json_mode: bool = False) -> str:
-    if not config.DEEPSEEK_API_KEY:
-        raise TranslateError("DEEPSEEK_API_KEY not configured")
+                json_mode: bool = False, engine: str = "deepseek") -> str:
+    prov = _provider(engine)
+    if not prov["key"] and engine != "deepseek":
+        prov = _provider("deepseek")  # secondary engine unconfigured → fall back
+    if not prov["key"]:
+        raise TranslateError(f"{prov['name']} API key not configured")
     _check_budget()
     payload: dict[str, Any] = {
-        "model": config.DEEPSEEK_MODEL,
+        "model": prov["model"],
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": 0.2,
-        "thinking": {"type": "disabled"},
     }
+    if prov["thinking_off"]:  # DeepSeek burns ~90% of tokens "thinking" otherwise
+        payload["thinking"] = {"type": "disabled"}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     async with httpx.AsyncClient(timeout=90) as client:
         resp = await client.post(
-            f"{config.DEEPSEEK_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}"},
+            f"{prov['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {prov['key']}",
+                     "User-Agent": config.USER_AGENT},
             json=payload,
         )
     if resp.status_code != 200:
-        raise TranslateError(f"deepseek http {resp.status_code}: {resp.text[:200]}")
+        raise TranslateError(f"{prov['name']} http {resp.status_code}: {resp.text[:200]}")
     data = resp.json()
     usage = data.get("usage", {}).get("total_tokens", 0)
     if usage:
@@ -88,7 +106,7 @@ def _parse_json_list(content: str, expected: int) -> list[str]:
     return items[:expected]
 
 
-async def _translate_batch(segments: list[str]) -> list[str]:
+async def _translate_batch(segments: list[str], engine: str = "deepseek") -> list[str]:
     numbered = json.dumps({"segments": segments}, ensure_ascii=False)
     content = await _chat(
         [
@@ -102,6 +120,7 @@ async def _translate_batch(segments: list[str]) -> list[str]:
         ],
         max_tokens=6000,
         json_mode=True,
+        engine=engine,
     )
     try:
         return _parse_json_list(content, len(segments))
@@ -121,7 +140,7 @@ async def _translate_batch(segments: list[str]) -> list[str]:
         return _parse_json_list(content, len(segments))
 
 
-async def translate_segments(segments: list[str]) -> list[str]:
+async def translate_segments(segments: list[str], engine: str = "deepseek") -> list[str]:
     """Translate paragraphs preserving order; batches sized by char budget."""
     batches: list[list[str]] = []
     batch: list[str] = []
@@ -141,17 +160,17 @@ async def translate_segments(segments: list[str]) -> list[str]:
 
     async def run(one: list[str]) -> list[str]:
         async with semaphore:
-            return await _translate_batch(one)
+            return await _translate_batch(one, engine)
 
     results = await asyncio.gather(*(run(b) for b in batches))
     return [zh for chunk in results for zh in chunk]
 
 
-async def translate_titles(titles: list[str]) -> list[str]:
-    return await translate_segments(titles)
+async def translate_titles(titles: list[str], engine: str = "deepseek") -> list[str]:
+    return await translate_segments(titles, engine)
 
 
-async def summarize(title: str, text: str) -> dict[str, Any]:
+async def summarize(title: str, text: str, engine: str = "deepseek") -> dict[str, Any]:
     """Structured TL;DR: one-line takeaway + 3-4 key bullets (Chinese)."""
     content = await _chat(
         [
@@ -164,6 +183,7 @@ async def summarize(title: str, text: str) -> dict[str, Any]:
         ],
         max_tokens=700,
         json_mode=True,
+        engine=engine,
     )
     parsed = json.loads(content)
     if not isinstance(parsed, dict) or "tldr" not in parsed:
@@ -172,7 +192,7 @@ async def summarize(title: str, text: str) -> dict[str, Any]:
             "points": [str(p) for p in parsed.get("points", [])][:5]}
 
 
-async def translate_phrase(text: str) -> dict[str, Any]:
+async def translate_phrase(text: str, engine: str = "deepseek") -> dict[str, Any]:
     """Translate a selected word / phrase / sentence. For short selections also
     return a one-line gloss (part of speech / nuance); for long ones just the
     translation. Returns {zh, note}."""
@@ -190,6 +210,7 @@ async def translate_phrase(text: str) -> dict[str, Any]:
         ],
         max_tokens=600,
         json_mode=True,
+        engine=engine,
     )
     parsed = json.loads(content)
     if not isinstance(parsed, dict) or "zh" not in parsed:
@@ -197,7 +218,7 @@ async def translate_phrase(text: str) -> dict[str, Any]:
     return {"zh": str(parsed.get("zh", "")), "note": str(parsed.get("note", ""))}
 
 
-async def assign_tags(items: list[dict[str, Any]]) -> dict[int, list[str]]:
+async def assign_tags(items: list[dict[str, Any]], engine: str = "deepseek") -> dict[int, list[str]]:
     """Classify articles into config.TAXONOMY tags. items: [{id, title, summary}].
     Returns {article_id: [tags]} — only tags from the fixed taxonomy."""
     if not items:
@@ -218,6 +239,7 @@ async def assign_tags(items: list[dict[str, Any]]) -> dict[int, list[str]]:
         ],
         max_tokens=3000,
         json_mode=True,
+        engine=engine,
     )
     parsed = json.loads(content)
     if not isinstance(parsed, dict):
@@ -235,7 +257,7 @@ async def assign_tags(items: list[dict[str, Any]]) -> dict[int, list[str]]:
     return result
 
 
-async def make_digest(sections: list[dict[str, Any]]) -> dict[str, Any]:
+async def make_digest(sections: list[dict[str, Any]], engine: str = "deepseek") -> dict[str, Any]:
     """Daily digest from the last 24h of articles.
     sections: [{cat, label, articles: [{id, title, title_zh, summary}]}]"""
     # Titles/summaries are untrusted feed content — wrap in guillemets so an
@@ -263,6 +285,7 @@ async def make_digest(sections: list[dict[str, Any]]) -> dict[str, Any]:
         ],
         max_tokens=3200,
         json_mode=True,
+        engine=engine,
     )
     parsed = json.loads(content)
     if not isinstance(parsed, dict) or "top" not in parsed:
