@@ -1,0 +1,19 @@
+[Unit]
+Description=Meridian bilingual RSS reader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/meridian
+EnvironmentFile=/home/ubuntu/meridian/.env
+ExecStart=/home/ubuntu/meridian/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 3023
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

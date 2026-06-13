@@ -1,0 +1,15 @@
+data/
+.env
+venv/
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+.secret
+run_local.sh
+
+# private one-off migration/backfill scripts:
+# contain an internal RSSHub domain + personal X follow list, useless to others
+deploy/migrate_*.py
+deploy/_*.py
