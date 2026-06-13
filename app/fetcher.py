@@ -11,7 +11,7 @@ from typing import Any
 import feedparser
 import httpx
 
-from . import config, db
+from . import config, db, extract
 from .sanitize import first_image, sanitize_html, strip_tags
 
 log = logging.getLogger("meridian.fetcher")
@@ -252,6 +252,11 @@ async def refresh_all() -> int:
 
                 async def guarded(feed: sqlite3.Row) -> int:
                     async with semaphore:
+                        try:  # defense-in-depth SSRF guard on every fetch
+                            await asyncio.to_thread(extract.assert_public_url, feed["url"])
+                        except Exception:
+                            log.warning("SSRF guard rejected %s", _scrub_url(feed["url"]))
+                            return 0
                         return await fetch_one(client, feed)
 
                 results = await asyncio.gather(

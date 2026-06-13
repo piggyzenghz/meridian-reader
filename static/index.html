@@ -55,7 +55,7 @@
       <div class="nav-feeds" id="nav-feeds"></div>
     </div>
     <div class="sidebar-foot">
-      <div class="usage" id="usage" title="今日 DeepSeek 用量">
+      <div class="usage" id="usage" title="今日 AI 用量">
         <div class="usage-bar"><i id="usage-fill"></i></div>
         <span id="usage-label">—</span>
       </div>
@@ -177,6 +177,14 @@
     <div class="engine-box">
       <div class="engine-head"><svg><use href="#i-sparkle"/></svg>AI 引擎（简报 / 摘要 / 翻译 各自可切）</div>
       <div class="engine-list" id="engine-list"></div>
+    </div>
+    <div class="opml-box">
+      <div class="opml-head"><svg><use href="#i-doc"/></svg>订阅导入 / 导出（OPML）</div>
+      <div class="opml-actions">
+        <a class="pill ghost" id="btn-opml-export" href="/opml" download="meridian-feeds.opml">导出 OPML</a>
+        <button class="pill ghost" id="btn-opml-import" type="button">导入 OPML</button>
+      </div>
+      <textarea id="opml-input" class="opml-input hidden" placeholder="粘贴 OPML 内容，再点一次「导入 OPML」…"></textarea>
     </div>
     <div class="feed-list" id="feed-list"></div>
   </div>

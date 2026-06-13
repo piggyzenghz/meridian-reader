@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS feeds (
     category TEXT NOT NULL DEFAULT 'tech',
     site_url TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
+    always_keep INTEGER NOT NULL DEFAULT 0,
     etag TEXT NOT NULL DEFAULT '',
     last_modified TEXT NOT NULL DEFAULT '',
     last_fetched INTEGER NOT NULL DEFAULT 0,
@@ -120,6 +121,9 @@ COLUMN_MIGRATIONS = [
     "ALTER TABLE articles ADD COLUMN progress REAL NOT NULL DEFAULT 0",
     "ALTER TABLE articles ADD COLUMN word_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE articles ADD COLUMN tagged INTEGER NOT NULL DEFAULT 0",
+    # always_keep feeds (low-frequency quality sources) are exempt from the
+    # KEEP_DAYS age-prune so their slow updates aren't deleted before being seen.
+    "ALTER TABLE feeds ADD COLUMN always_keep INTEGER NOT NULL DEFAULT 0",
 ]
 
 
@@ -129,8 +133,9 @@ def init_db() -> None:
         for migration in COLUMN_MIGRATIONS:
             try:
                 db.execute(migration)
-            except sqlite3.OperationalError:
-                pass  # column already exists
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc):
+                    raise  # only swallow the already-applied case, surface real errors
         seeded = db.execute("SELECT value FROM meta WHERE key='seeded'").fetchone()
         if not seeded:
             now = int(time.time())
@@ -176,12 +181,19 @@ def tokens_today(db: sqlite3.Connection, day: str) -> int:
 def prune_articles(db: sqlite3.Connection) -> int:
     """Drop old / overflow articles (starred always kept). Returns rows deleted."""
     cutoff = int(time.time()) - config.KEEP_DAYS * 86400
+    # age-prune everything EXCEPT always_keep feeds (slow-update quality sources
+    # whose latest item may itself be >KEEP_DAYS old). They're still bounded by
+    # the per-feed MAX_PER_FEED cap below, so the DB can't grow unbounded.
     cur = db.execute(
-        "DELETE FROM articles WHERE is_starred=0 AND published < ?", (cutoff,)
+        "DELETE FROM articles WHERE is_starred=0 AND published < ? AND feed_id"
+        " NOT IN (SELECT id FROM feeds WHERE always_keep=1)", (cutoff,)
     )
     deleted = cur.rowcount
     rows = db.execute("SELECT id FROM feeds").fetchall()
     for row in rows:
+        # keep newest MAX_PER_FEED per feed (bounds always_keep feeds too so the
+        # DB can't grow unbounded); is_starred=0 protects starred items here
+        # regardless of their rank in the window.
         cur = db.execute(
             """DELETE FROM articles WHERE feed_id=? AND is_starred=0 AND id NOT IN (
                    SELECT id FROM articles WHERE feed_id=?

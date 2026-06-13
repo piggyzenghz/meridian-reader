@@ -31,12 +31,29 @@ const CAT_VAR = {
 };
 
 /* deterministic colored letter badge per source */
-function srcBadge(title) {
+function letterBadge(title) {
   let hash = 0;
   for (const ch of String(title)) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
   const hue = hash % 360;
   const ch = [...String(title).replace(/^(the|a)\s+/i, "")][0]?.toUpperCase() || "?";
   return `<span class="src-badge" style="background:hsl(${hue} 42% 46%)">${esc(ch)}</span>`;
+}
+
+function hostOf(url) {
+  try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
+}
+
+/* Real favicon for normal sources; x.com / twitter feeds (all one X logo) keep
+   the distinguishing letter badge. A favicon load failure falls back to the
+   letter badge — see the central image-error listener. */
+function srcBadge(title, feedId) {
+  const feed = feedId ? (S.state?.feeds || []).find((f) => f.id === feedId) : null;
+  const host = feed ? hostOf(feed.site_url) : "";
+  const isX = /(^|\.)(x|twitter)\.com$/.test(host);
+  if (feed && host && !isX) {
+    return `<img class="src-favicon" src="/favicon/${feedId}" alt="" width="17" height="17" data-badge="${esc(title)}" referrerpolicy="no-referrer">`;
+  }
+  return letterBadge(title);
 }
 
 const fmtMins = (chars) => Math.max(1, Math.round(chars / 1100));
@@ -463,7 +480,7 @@ async function renderHighlightsView() {
       <div class="hl-card" data-id="${h.id}" data-article="${h.article_id}">
         <div class="hl-card-text">${esc(h.text)}</div>
         <div class="hl-card-meta">
-          ${srcBadge(h.feed_title)}<span>${esc(h.feed_title)}</span><span>·</span>
+          ${srcBadge(h.feed_title, h.feed_id)}<span>${esc(h.feed_title)}</span><span>·</span>
           <span>${esc((h.title_zh || h.title).slice(0, 50))}</span>
           <span>·</span><span>${fmtTime(h.created_at)}</span>
           <span class="del" title="删除高亮">✕</span>
@@ -530,7 +547,7 @@ function itemHtml(a, i) {
     <span class="item-dot"></span>
     <div class="item-body">
       <div class="item-meta">
-        ${srcBadge(a.feed_title)}
+        ${srcBadge(a.feed_title, a.feed_id)}
         <span class="item-src">${esc(a.feed_title)}</span><span>·</span><span>${fmtTime(a.published)}</span>${mins}
         ${a.read_later ? '<svg class="item-later-mini"><use href="#i-clock"/></svg>' : ""}
         ${a.is_starred ? '<svg class="item-star-mini"><use href="#i-star"/></svg>' : ""}
@@ -1297,6 +1314,10 @@ $("#btn-theme").addEventListener("click", (e) =>
 document.addEventListener("error", (e) => {
   const el = e.target;
   if (!el || el.tagName !== "IMG") return;
+  if (el.classList.contains("src-favicon")) {  // no cached favicon → letter badge
+    el.outerHTML = letterBadge(el.dataset.badge || "?");
+    return;
+  }
   const thumb = el.closest(".item-thumb");
   if (thumb) thumb.remove();        // list: drop the broken thumbnail box
   else el.style.display = "none";   // reader body: hide the broken image
@@ -1452,6 +1473,18 @@ $("#mute-add-form").addEventListener("submit", async (e) => {
     if (S.view.mode === "list") loadArticles(true);
     toast(`已屏蔽 <b>${esc(v)}</b>`);
   } catch (err) { toast(`屏蔽失败：${esc(err.message)}`); }
+});
+$("#btn-opml-import")?.addEventListener("click", async () => {
+  const ta = $("#opml-input");
+  if (ta.classList.contains("hidden")) { ta.classList.remove("hidden"); ta.focus(); return; }
+  const opml = ta.value.trim();
+  if (!opml) { ta.classList.add("hidden"); return; }
+  try {
+    const r = await api("/api/opml/import", { method: "POST", body: { opml } });
+    toast(`已导入 <b>${r.imported}</b> 个源（共 ${r.seen} 个，抓取中…）`);
+    ta.value = ""; ta.classList.add("hidden");
+    setTimeout(async () => { await refreshState(false); renderFeedList(); renderFeeds(); }, 1500);
+  } catch (e) { toast(`导入失败：${esc(e.message)}`); }
 });
 $("#btn-settings").addEventListener("click", openSettings);
 $("#btn-add-feed").addEventListener("click", openSettings);

@@ -11,12 +11,12 @@ from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, config, db, digest, discover, extract, fetcher, market,
-               tagger, translate)
+from . import (auth, config, db, digest, discover, extract, favicon, fetcher,
+               market, tagger, translate)
 from .sanitize import merge_lost_images, needs_translation, split_blocks, strip_tags
 
 logging.basicConfig(level=logging.INFO,
@@ -819,10 +819,13 @@ async def add_feed(body: FeedIn) -> dict[str, Any]:
     ) as client:
         new_count = await fetcher.fetch_one(client, feed)
     with db.get_db() as conn:
-        feed = _public_feed(dict(conn.execute(
-            "SELECT id, url, title, category, last_error FROM feeds WHERE id=?",
-            (feed_id,)).fetchone()))
-    return {"feed": feed, "new_articles": new_count}
+        row = dict(conn.execute(
+            "SELECT id, url, title, category, last_error, site_url FROM feeds"
+            " WHERE id=?", (feed_id,)).fetchone())
+    # fetch_one populated site_url from the feed — grab its favicon in the
+    # background so the new source shows a real icon on the next render.
+    asyncio.create_task(favicon.fetch_and_store(feed_id, row.get("site_url", "")))
+    return {"feed": _public_feed(row), "new_articles": new_count}
 
 
 class FeedPatch(BaseModel):
@@ -880,6 +883,124 @@ async def health() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- static
+
+@app.get("/favicon/{feed_id}")
+async def feed_favicon(feed_id: int) -> Any:
+    """Serve a cached per-feed favicon (public; the UI falls back to a letter
+    badge on 404)."""
+    path = favicon.favicon_path(feed_id)
+    if not path.exists():
+        raise HTTPException(404, "no favicon")
+    return FileResponse(path, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=604800"})
+
+
+@app.get("/opml", dependencies=[protected])
+async def export_opml() -> Response:
+    """Export portable feeds as OPML, grouped by category. Internal feeds
+    (localhost RSSHub with keys, xgo.ing user ids) are skipped — they depend on
+    private infra, aren't portable, and shouldn't leak (open-source 脱敏铁律)."""
+    from xml.sax.saxutils import quoteattr
+    with db.get_db() as conn:
+        feeds = conn.execute(
+            "SELECT title, url, site_url, category FROM feeds WHERE enabled=1"
+            " ORDER BY category, title COLLATE NOCASE").fetchall()
+    by_cat: dict[str, list] = {}
+    for f in feeds:
+        host = (urlparse(f["url"]).hostname or "").lower()
+        if (host in ("localhost", "127.0.0.1", "::1") or "xgo.ing" in host
+                or "key=" in f["url"].lower()):
+            continue  # non-portable / internal — never export
+        by_cat.setdefault(f["category"], []).append(f)
+    out = ['<?xml version="1.0" encoding="UTF-8"?>', '<opml version="2.0">',
+           '<head><title>Meridian feeds</title></head>', '<body>']
+    for cat in config.CATEGORIES:
+        rows = by_cat.get(cat)
+        if not rows:
+            continue
+        label = config.CATEGORY_LABELS.get(cat, cat)
+        out.append(f'  <outline text={quoteattr(label)} title={quoteattr(label)}>')
+        for f in rows:
+            out.append(
+                f'    <outline type="rss" text={quoteattr(f["title"])} '
+                f'title={quoteattr(f["title"])} xmlUrl={quoteattr(f["url"])} '
+                f'htmlUrl={quoteattr(f["site_url"] or "")}/>')
+        out.append('  </outline>')
+    out += ['</body>', '</opml>']
+    return Response("\n".join(out), media_type="text/x-opml",
+                    headers={"Content-Disposition": 'attachment; filename="meridian-feeds.opml"'})
+
+
+class OpmlIn(BaseModel):
+    opml: str = Field(min_length=1, max_length=2_000_000)
+
+
+@app.post("/api/opml/import", dependencies=[protected])
+async def import_opml(body: OpmlIn) -> dict[str, Any]:
+    """Import feeds from pasted OPML. Parses with the stdlib (defused against
+    entity expansion by disabling DTD), caps the count, validates each URL via
+    the existing SSRF guard, then reuses the add_feed fetch+favicon pipeline."""
+    import xml.etree.ElementTree as ET
+    valid_cats = set(config.CATEGORIES)
+    try:
+        # ET doesn't expand external entities by default; the size cap above
+        # bounds billion-laughs-style blowups.
+        root = ET.fromstring(body.opml)
+    except ET.ParseError as exc:
+        raise HTTPException(400, f"invalid OPML: {exc}")
+    candidates: list[tuple[str, str, str]] = []
+    for outline in root.iter("outline"):
+        url = (outline.get("xmlUrl") or "").strip()
+        if not url.startswith(("http://", "https://")):
+            continue
+        title = (outline.get("title") or outline.get("text") or url)[:200].strip()
+        cat = (outline.get("category") or "tech").strip()
+        candidates.append((url, title, cat if cat in valid_cats else "tech"))
+        if len(candidates) >= 300:  # hard cap
+            break
+    # SSRF guard BEFORE insert: only public URLs ever reach the feeds table, so
+    # a later refresh_all can't be tricked into probing internal/metadata hosts
+    # (e.g. 169.254.169.254). Each check is bounded so a list of unresolvable
+    # hostnames can't hold the request open.
+    async def _is_public(url: str) -> bool:
+        try:
+            await asyncio.wait_for(asyncio.to_thread(extract.assert_public_url, url), 5.0)
+            return True
+        except Exception:
+            return False
+    checks = await asyncio.gather(*(_is_public(u) for u, _, _ in candidates))
+    safe = [c for c, ok in zip(candidates, checks) if ok]
+    now = int(time.time())
+    added = []
+    with db.get_db() as conn:
+        for url, title, cat in safe:
+            try:
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO feeds (url, title, category, created_at)"
+                    " VALUES (?,?,?,?)", (url, title, cat, now))
+                if cur.rowcount:
+                    added.append(cur.lastrowid)
+            except sqlite3.IntegrityError:
+                continue
+    # URLs already SSRF-checked; hydrate just fetches + grabs favicons.
+    async def _hydrate() -> None:
+        async with httpx.AsyncClient(
+            timeout=config.FETCH_TIMEOUT, follow_redirects=True,
+            headers={"User-Agent": config.USER_AGENT}) as client:
+            for fid in added:
+                with db.get_db() as conn:
+                    feed = conn.execute("SELECT * FROM feeds WHERE id=?", (fid,)).fetchone()
+                try:
+                    await fetcher.fetch_one(client, feed)
+                    with db.get_db() as conn:
+                        site = conn.execute("SELECT site_url FROM feeds WHERE id=?", (fid,)).fetchone()["site_url"]
+                    await favicon.fetch_and_store(fid, site)
+                except Exception:
+                    pass
+    if added:
+        asyncio.create_task(_hydrate())
+    return {"imported": len(added), "seen": len(candidates)}
+
 
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
 
