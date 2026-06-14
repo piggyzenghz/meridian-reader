@@ -425,13 +425,15 @@ def _article_payload(article: dict[str, Any], extracting: bool) -> dict[str, Any
 
 
 @app.get("/api/articles/{article_id}", dependencies=[protected])
-async def get_article(article_id: int) -> dict[str, Any]:
+async def get_article(article_id: int, prefetch: int = 0) -> dict[str, Any]:
     """Always fast: returns stored content immediately, auto-starting a
-    background extraction for short articles that haven't been tried yet."""
+    background extraction for short articles that haven't been tried yet.
+    prefetch=1 (speculative next-article warmup) skips the auto-extraction so a
+    page the user may never open doesn't burn an extraction slot."""
     article = _get_article(article_id)
     plain_len = len(strip_tags(_content_of(article)))
-    auto = (not article["content_full"] and not article["extract_tried"]
-            and plain_len < 600)
+    auto = (not prefetch and not article["content_full"]
+            and not article["extract_tried"] and plain_len < 600)
     extracting = _start_extraction(article) if auto else (article_id in _extracting)
     return _article_payload(article, extracting)
 

@@ -80,6 +80,9 @@ async function api(path, opts = {}) {
   return data;
 }
 
+const prefersReduce = matchMedia("(prefers-reduced-motion: reduce)");
+const scrollBehavior = () => (prefersReduce.matches ? "auto" : "smooth");
+
 function toast(html) {
   // contract: callers MUST esc() any non-numeric dynamic value
   const el = document.createElement("div");
@@ -207,9 +210,12 @@ $("#nav-monitors").addEventListener("click", async (e) => {
   const del = e.target.closest(".mon-del");
   if (del) {
     e.stopPropagation();
+    const gone = (S.state?.monitors || []).find((m) => String(m.id) === del.dataset.id);
     await api(`/api/monitors/${del.dataset.id}`, { method: "DELETE" }).catch(() => {});
-    if (S.view.monitor) Object.assign(S.view, { monitor: "" });
-    await refreshState(false); switchView();
+    await refreshState(false);
+    if (gone && S.view.monitor === gone.query) {  // only leave the view if it's the one deleted
+      S.view.monitor = ""; switchView();
+    }
     return;
   }
   const item = e.target.closest(".mon-item");
@@ -234,7 +240,7 @@ function navItem({ key, en, zh, count, color, feedId }) {
     ? (S.view.mode === "list" && S.view.feedId === feedId)
     : (S.view.mode === "list" && !S.view.feedId && S.view.category === key &&
        !["starred", "later"].includes(S.view.filter));
-  return `<button class="nav-item ${active ? "active" : ""}"
+  return `<button class="nav-item ${active ? "active" : ""}" ${active ? 'aria-current="true"' : ""}
     data-cat="${key}" ${feedId ? `data-feed="${feedId}"` : ""}
     style="--cat:${color || "var(--accent)"}">
     <span class="nav-dot"></span>
@@ -247,7 +253,7 @@ function iconNavItem({ mode, filter, icon, en, zh, count, color, fill }) {
   const active = mode
     ? S.view.mode === mode
     : (S.view.mode === "list" && S.view.filter === filter && !S.view.category);
-  return `<button class="nav-item ${active ? "active" : ""}"
+  return `<button class="nav-item ${active ? "active" : ""}" ${active ? 'aria-current="true"' : ""}
     ${mode ? `data-mode="${mode}"` : `data-filter-view="${filter}"`} style="--cat:${color}">
     <span class="nav-dot" style="background:transparent;box-shadow:none">
       <svg style="width:11px;height:11px;stroke:${color};fill:${fill && active ? color : "none"};stroke-width:2"><use href="#${icon}"/></svg>
@@ -760,7 +766,7 @@ function itemHtml(a, i) {
   const mins = a.word_count > 350 ? `<span>·</span><span class="item-min">${fmtMins(a.word_count)} min</span>` : "";
   const progress = a.progress > 4 && a.progress < 96 && !a.is_read
     ? `<span class="item-progressbar" style="width:${Math.round(a.progress)}%"></span>` : "";
-  return `<article class="item ${a.is_read ? "read" : ""}" data-id="${a.id}" style="--i:${i};--cat:${CAT_VAR[a.category]}">
+  return `<article class="item ${a.is_read ? "read" : ""}" data-id="${a.id}" tabindex="0" role="button" aria-label="${esc(a.title_zh || a.title)}" style="--i:${i};--cat:${CAT_VAR[a.category]}">
     <span class="item-dot"></span>
     <div class="item-body">
       <div class="item-meta">
@@ -823,6 +829,16 @@ $("#list").addEventListener("click", async (e) => {
   const item = e.target.closest(".item");
   if (item) openArticle(+item.dataset.id);
 });
+// keyboard: Enter/Space on a focused list item opens it (items are tabindex=0).
+// stopPropagation so the global Enter handler (j/k selection) doesn't also fire.
+$("#list").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const item = e.target.closest?.(".item");
+  if (item && e.target === item) {
+    e.preventDefault(); e.stopPropagation();
+    openArticle(+item.dataset.id);
+  }
+});
 
 /* infinite scroll */
 new IntersectionObserver((entries) => {
@@ -881,7 +897,7 @@ function nextArticleId(id) {
 }
 function prefetchArticle(id) {
   if (!id || _articleCache.has(id)) return;
-  api(`/api/articles/${id}`).then((a) => {
+  api(`/api/articles/${id}?prefetch=1`).then((a) => {   // don't trigger extraction on speculative warmup
     _articleCache.set(id, a);
     if (_articleCache.size > 12) _articleCache.delete(_articleCache.keys().next().value);
   }).catch(() => {});
@@ -1172,7 +1188,7 @@ $("#btn-translate").addEventListener("click", async () => {
 $("#btn-summary").addEventListener("click", async () => {
   if (!S.current) return;
   const slot = $("#summary-slot");
-  if (S.current.summary_zh) { slot.scrollIntoView({ behavior: "smooth" }); return; }
+  if (S.current.summary_zh) { slot.scrollIntoView({ behavior: scrollBehavior() }); return; }
   slot.innerHTML = summaryCardHtml("正在阅读全文并撰写摘要…").replace("summary-card", "summary-card loading");
   try {
     const data = await api(`/api/articles/${S.current.id}/summarize`, { method: "POST" });
@@ -1259,7 +1275,7 @@ function ttsBuildSpans() {
   // wrap each word of the prose/blocks in a span so we can highlight on boundary
   const root = $("#reader-inner");
   const blocks = root.querySelectorAll(
-    ".prose p, .prose li, .prose h2, .prose h3, .blk-en, .blk-zh, .reader-title, .reader-title-zh, .summary-tldr, .summary-points li");
+    ".prose p, .prose li, .prose h2, .prose h3, .blk-en, .blk-zh, .reader-title, .reader-title-en, .summary-tldr, .summary-points li");
   const segs = [];
   blocks.forEach((b) => {
     if (b.closest(".related")) return;
@@ -1305,7 +1321,7 @@ function ttsStart() {
     const u = new SpeechSynthesisUtterance(seg.text);
     u.rate = tts.rate;
     u.lang = /[一-鿿]/.test(seg.text) ? "zh-CN" : "en-US";
-    seg.el.scrollIntoView({ block: "center", behavior: "smooth" });
+    seg.el.scrollIntoView({ block: "center", behavior: scrollBehavior() });
     u.onstart = () => { seg.el.classList.add("tts-word"); tts.lastMark = seg.el; };
     u.onend = () => { seg.el.classList.remove("tts-word"); i++; speakNext(); };
     u.onerror = () => { seg.el.classList.remove("tts-word"); i++; speakNext(); };
@@ -1375,25 +1391,34 @@ document.addEventListener("click", (e) => {
 /* selection → highlight popover */
 const hlPop = $("#hl-pop");
 let hlSelection = "";
+function showSelPopover() {
+  const sel = window.getSelection();
+  const text = sel?.toString().trim() || "";
+  if (!text || text.length < 2 || text.length > 1000 || !S.current) {
+    hlPop.classList.add("hidden");
+    return;
+  }
+  if (!$("#reader-inner").contains(sel.anchorNode)) return;
+  hlSelection = text;
+  hlSelRect = sel.getRangeAt(0).getBoundingClientRect();
+  hlPop.classList.remove("hidden");
+  hlTrans.classList.add("hidden");
+  const top = Math.max(8, hlSelRect.top - 48);
+  const left = Math.min(window.innerWidth - 240,
+    Math.max(8, hlSelRect.left + hlSelRect.width / 2 - 115));
+  hlPop.style.top = `${top}px`;
+  hlPop.style.left = `${left}px`;
+}
+let _selTimer;
 $("#reader-scroll").addEventListener("mouseup", () => {
-  setTimeout(() => {
-    const sel = window.getSelection();
-    const text = sel?.toString().trim() || "";
-    if (!text || text.length < 2 || text.length > 1000 || !S.current) {
-      hlPop.classList.add("hidden");
-      return;
-    }
-    if (!$("#reader-inner").contains(sel.anchorNode)) return;
-    hlSelection = text;
-    hlSelRect = sel.getRangeAt(0).getBoundingClientRect();
-    hlPop.classList.remove("hidden");
-    hlTrans.classList.add("hidden");
-    const top = Math.max(8, hlSelRect.top - 48);
-    const left = Math.min(window.innerWidth - 240,
-      Math.max(8, hlSelRect.left + hlSelRect.width / 2 - 115));
-    hlPop.style.top = `${top}px`;
-    hlPop.style.left = `${left}px`;
-  }, 10);
+  clearTimeout(_selTimer);   // cancel a pending touch-path call (hybrid mouse+touch)
+  setTimeout(showSelPopover, 10);
+});
+// touch devices don't fire mouseup on long-press selection — use selectionchange (debounced)
+document.addEventListener("selectionchange", () => {
+  if (!("ontouchstart" in window)) return;   // desktop already covered by mouseup
+  clearTimeout(_selTimer);
+  _selTimer = setTimeout(showSelPopover, 350);
 });
 document.addEventListener("mousedown", (e) => {
   if (!hlPop.contains(e.target)) hlPop.classList.add("hidden");
@@ -1425,7 +1450,8 @@ $("#hl-translate").addEventListener("click", async () => {
     $("#hl-trans-zh").className = "hl-trans-zh";
     $("#hl-trans-note").textContent = data.note || "";
   } catch (err) {
-    $("#hl-trans-zh").textContent = `翻译失败：${err.message}`;
+    console.warn("phrase translate failed:", err);
+    $("#hl-trans-zh").textContent = "翻译失败，请稍后再试";
     $("#hl-trans-zh").className = "hl-trans-zh";
   }
 });
@@ -1614,7 +1640,7 @@ async function renderPalette(q) {
 function highlightPalette(i) {
   paletteIdx = Math.max(0, Math.min(i, paletteItems.length - 1));
   paletteItems.forEach((el, j) => el.classList.toggle("active", j === paletteIdx));
-  paletteItems[paletteIdx]?.scrollIntoView({ block: "nearest" });
+  paletteItems[paletteIdx]?.scrollIntoView({ block: "nearest", behavior: scrollBehavior() });
 }
 
 function runPaletteItem(el) {
@@ -1795,7 +1821,7 @@ function moveSelection(delta) {
   S.selectedIdx = Math.max(0, Math.min(items.length - 1, S.selectedIdx + delta));
   items.forEach((el, i) => el.style.background =
     i === S.selectedIdx ? "color-mix(in srgb, var(--surface-2) 85%, transparent)" : "");
-  items[S.selectedIdx].scrollIntoView({ block: "nearest", behavior: "smooth" });
+  items[S.selectedIdx].scrollIntoView({ block: "nearest", behavior: scrollBehavior() });
 }
 
 document.addEventListener("keydown", (e) => {
