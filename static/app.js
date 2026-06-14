@@ -330,6 +330,7 @@ function viewTitle() {
 }
 
 function switchView() {
+  ++loadSeq;   // any in-flight list load belongs to the previous view — supersede it so a late /api/articles can't clobber #list (articles bleeding into Events/Briefing/Highlights)
   renderNav(); renderTags(); renderMonitors(); renderFeeds();
   const isList = S.view.mode === "list";
   $(".seg").style.display = isList ? "" : "none";
@@ -404,12 +405,14 @@ async function renderDigestView(forceGen = false) {
           throw err;
         });
   } catch (err) {
+    if (S.view.mode !== "digest") return;   // switched away mid-fetch — don't clobber the new view
     wrap.innerHTML = `<div class="digest-wrap"><div class="digest-date">每日简报 · ${dateLabel}</div>
       <div class="digest-empty"><div class="empty-line">简报生成失败</div>
       <div class="empty-sub">${esc(err.message)}</div>
       <button class="pill" style="margin-top:18px" onclick="window.__retryDigest()">重试生成</button></div></div>`;
     return;
   }
+  if (S.view.mode !== "digest") return;     // switched away mid-fetch — don't clobber the new view
   let main = `<div class="digest-date">每日简报 · ${dateLabel}</div>
     <h1 class="digest-headline">${esc(data.headline || "")}</h1>`;
   if (data.top?.length) {
@@ -466,11 +469,16 @@ async function renderClustersView() {
   $("#list").innerHTML = `<div class="ev3">
     <div class="ev-col ev-list" id="ev-list"><div class="sk-line" style="margin:16px;width:72%"></div></div>
     <div class="ev-col ev-mid" id="ev-mid"><div class="ev-ph">← 选一个事件，看多家媒体怎么报道同一件事</div></div>
-    <div class="ev-col ev-read" id="ev-read"><div class="ev-ph">选一篇报道，正文显示在这里</div></div>
+    <div class="ev-col ev-read" id="ev-read">
+      <button class="ev-back" data-ev-back="reports">← 各家报道</button>
+      <div class="ev-read-body" id="ev-read-body"><div class="ev-ph">选一篇报道，正文显示在这里</div></div>
+    </div>
   </div>`;
   try {
     const data = await api("/api/clusters");
+    if (S.view.mode !== "clusters") return;   // switched away mid-fetch — don't clobber #list
     const list = $("#ev-list");
+    if (!list) return;
     $("#view-count").textContent = data.refreshed_at
       ? `近 ${data.window_days || 5} 天热点 · 更新于 ${fmtTime(data.refreshed_at)}`
       : "";
@@ -480,20 +488,26 @@ async function renderClustersView() {
         <span class="ev-item-badge">${c.heat ? `<span class="ev-item-heat">🔥 ${c.heat}</span>` : ""}<span>◈ ${c.source_count} 家 · ${c.member_count} 篇</span></span>
         <span class="ev-item-title">${esc(c.title_zh || c.top_title)}</span>
         ${c.title_zh ? `<span class="ev-item-title-en">${esc(c.top_title)}</span>` : ""}</button>`).join("");
-  } catch { $("#ev-list").innerHTML = `<div class="ev-ph">加载失败</div>`; }
+  } catch {
+    if (S.view.mode !== "clusters") return;   // switched away mid-fetch — don't clobber the new view
+    const li = $("#ev-list"); if (li) li.innerHTML = `<div class="ev-ph">加载失败</div>`;
+  }
 }
 
 function evSelectCluster(cid, title) {
   EV.clusterId = cid; EV.articleId = null;
-  $(".ev3")?.classList.remove("has-article");  // back to list on narrow screens
+  const ev3 = $(".ev3");
+  ev3?.classList.add("has-cluster");           // narrow screens: drill into the event (list → reports)
+  ev3?.classList.remove("has-article");
   $$(".ev-item").forEach((b) => b.classList.toggle("active", b.dataset.cluster === cid));
-  $("#ev-mid").innerHTML = `<div class="ev-event-title">${esc(title)}</div>
+  $("#ev-mid").innerHTML = `<button class="ev-back" data-ev-back="list">← 事件列表</button>
+    <div class="ev-event-title">${esc(title)}</div>
     <div class="ev-summary" id="ev-summary"><div class="ev-sum-loading"><i class="spin-dot"></i> gpt-5.5 事件综述生成中…</div></div>
     <button class="ev-analyze-btn" data-cluster="${cid}" data-title="${esc(title)}">
       <span class="ev-az-ic">🧠</span><span class="ev-az-tx"><b>AI 聚合分析</b><i>右侧展开完整事件报告 · 全景/时间线/各方观点/走势</i></span><span class="ev-az-arrow">→</span></button>
     <div class="ev-reports-head">各家报道</div>
     <div class="ev-reports" id="ev-reports"><div class="sk-line" style="width:60%;margin:8px 0"></div></div>`;
-  $("#ev-read").innerHTML = `<div class="ev-ph">选一篇报道，正文显示在这里</div>`;
+  $("#ev-read-body").innerHTML = `<div class="ev-ph">选一篇报道，正文显示在这里</div>`;
   api(`/api/cluster/${cid}`).then((d) => {
     if (EV.clusterId !== cid) return;
     $("#ev-reports").innerHTML = d.members.map((m) => `
@@ -515,14 +529,14 @@ async function evSelectArticle(id) {
   EV.articleId = id; EV.blocks = null;
   $(".ev3")?.classList.add("has-article");  // narrow screens: right column takes over
   $$(".ev-report").forEach((b) => b.classList.toggle("active", b.dataset.id === id));
-  $("#ev-read").innerHTML = `<div class="ev-reading"><div class="sk-line" style="width:50%;margin:24px auto"></div></div>`;
+  $("#ev-read-body").innerHTML = `<div class="ev-reading"><div class="sk-line" style="width:50%;margin:24px auto"></div></div>`;
   try {
     const a = await api(`/api/articles/${id}`);
     if (EV.articleId !== id) return;
     EV.article = a; EV.blocks = a.body_zh?.length ? a.body_zh : null;
     evRenderArticle();
     if (a.extracting) evPollArticle(id);
-  } catch { if (EV.articleId === id) $("#ev-read").innerHTML = `<div class="ev-ph">加载失败</div>`; }
+  } catch { if (EV.articleId === id) $("#ev-read-body").innerHTML = `<div class="ev-ph">加载失败</div>`; }
 }
 
 function evRenderArticle() {
@@ -530,7 +544,7 @@ function evRenderArticle() {
   const titleBlock = a.title_zh
     ? `<h1 class="reader-title">${esc(a.title_zh)}</h1><div class="reader-title-en">${esc(a.title)}</div>`
     : `<h1 class="reader-title">${esc(a.title)}</h1>`;
-  $("#ev-read").innerHTML = `
+  $("#ev-read-body").innerHTML = `
     <div class="ev-read-bar">
       <span class="ev-read-meta"><b style="--cat:${CAT_VAR[a.category]}">${esc(a.feed_title)}</b> · ${fmtTime(a.published)}</span>
       <span class="ev-read-acts">
@@ -562,7 +576,7 @@ async function evToggleTranslate(id) {
 }
 
 async function evShowAnalysis(cid, title) {
-  const read = $("#ev-read");
+  const read = $("#ev-read-body");
   if (!read) return;   // view switched away before the click resolved
   EV.articleId = null;
   $(".ev3")?.classList.add("has-article");   // narrow screens: right column takes over
@@ -571,10 +585,10 @@ async function evShowAnalysis(cid, title) {
   read.innerHTML = `<div class="ev-analysis-loading"><i class="spin-dot"></i><div>gpt-5.5 正在生成深度事件分析…</div><div class="ev-al-sub">综合多家媒体报道，梳理来龙去脉与后续走势</div></div>`;
   try {
     const d = await api(`/api/cluster/${cid}/analysis`);
-    if (EV.clusterId !== cid || !$("#ev-read")) return;
+    if (EV.clusterId !== cid || !$("#ev-read-body")) return;
     renderAnalysis(d.analysis || {}, title);
   } catch (e) {
-    if ($("#ev-read")) $("#ev-read").innerHTML = `<div class="ev-ph">分析生成失败：${esc(e.message)}</div>`;
+    if ($("#ev-read-body")) $("#ev-read-body").innerHTML = `<div class="ev-ph">分析生成失败：${esc(e.message)}</div>`;
   } finally { $(".ev-analyze-btn")?.classList.remove("busy"); }
 }
 
@@ -598,7 +612,7 @@ function renderAnalysis(a, title) {
   const contro = a.controversy ? sec("⚡", "争议焦点", `<div class="an-contro">${esc(a.controversy)}</div>`) : "";
   const outlook = a.outlook?.length
     ? sec("🔮", "后续展望", `<div class="an-outlook">${a.outlook.map((o) => `<div class="an-o an-o-${evOddsClass(o.odds)}"><div class="an-o-head"><span class="an-o-path">${esc(o.path)}</span><span class="an-o-odds">可能性 ${esc(o.odds)}</span></div><div class="an-o-detail">${esc(o.detail)}</div></div>`).join("")}</div>`) : "";
-  $("#ev-read").innerHTML = `
+  $("#ev-read-body").innerHTML = `
     <div class="ev-read-bar"><span class="ev-read-meta">🧠 AI 深度事件分析 · gpt-5.5</span></div>
     <div class="ev-analysis">
       <h1 class="an-title">${esc(title)}</h1>
@@ -610,6 +624,8 @@ function renderAnalysis(a, title) {
 
 $("#list").addEventListener("click", (e) => {
   if (S.view.mode !== "clusters") return;
+  const back = e.target.closest(".ev-back");
+  if (back) return evBack(back.dataset.evBack);
   const item = e.target.closest(".ev-item");
   if (item) return evSelectCluster(item.dataset.cluster, item.dataset.title);
   const az = e.target.closest(".ev-analyze-btn");
@@ -619,6 +635,13 @@ $("#list").addEventListener("click", (e) => {
   const tb = e.target.closest(".ev-btn-translate");
   if (tb) return evToggleTranslate(tb.dataset.id);
 });
+
+// narrow-screen drill-out: article/analysis → reports → event list (no-op on desktop, back buttons are hidden)
+function evBack(to) {
+  const ev3 = $(".ev3"); if (!ev3) return;
+  if (to === "reports") ev3.classList.remove("has-article");
+  else ev3.classList.remove("has-cluster", "has-article");
+}
 
 async function loadMarkets() {
   const el = $("#digest-market");
@@ -655,6 +678,7 @@ async function renderHighlightsView() {
   wrap.innerHTML = `<div class="digest-wrap"><div class="sk-line" style="width:50%;height:18px"></div></div>`;
   try {
     const data = await api("/api/highlights");
+    if (S.view.mode !== "highlights") return;   // switched away mid-fetch — don't clobber the new view
     $("#view-count").textContent = data.items.length ? `${data.items.length} 条` : "";
     if (!data.items.length) {
       wrap.innerHTML = `<div class="empty"><svg><use href="#i-marker"/></svg>
@@ -673,6 +697,7 @@ async function renderHighlightsView() {
         </div>
       </div>`).join("") + "</div>";
   } catch (err) {
+    if (S.view.mode !== "highlights") return;   // switched away mid-fetch — don't clobber the new view
     wrap.innerHTML = `<div class="empty"><div class="empty-line">加载失败</div><div class="empty-sub">${esc(err.message)}</div></div>`;
   }
 }

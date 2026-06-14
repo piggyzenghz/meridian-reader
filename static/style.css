@@ -754,12 +754,19 @@ svg { display: block; }
 .an-o-mid .an-o-odds { color: #fff; background: #E8833A; }
 .an-o-lo .an-o-odds { color: var(--text-2); background: var(--surface-2); }
 .an-o-detail { font-size: 12.5px; line-height: 1.65; color: var(--text-2); }
+.ev-back { display: none; align-items: center; gap: 5px; font-size: 13px; font-weight: 650; color: var(--c-x); cursor: pointer; }
 @media (max-width: 1100px) {
-  .ev3 { grid-template-columns: 240px 1fr; }
-  .ev-read { display: none; }
-  .ev3.has-article .ev-list, .ev3.has-article .ev-mid { display: none; }
-  .ev3.has-article { grid-template-columns: 1fr; }
+  /* phone / tablet: single column, drill in & out — list → reports → article/analysis */
+  .ev3, .ev3.has-cluster, .ev3.has-article { grid-template-columns: 1fr; }
+  .ev-list { display: block; border-right: none; }
+  .ev-mid, .ev-read { display: none; }
+  .ev3.has-cluster .ev-list { display: none; }
+  .ev3.has-cluster .ev-mid { display: block; }
+  .ev3.has-cluster.has-article .ev-mid { display: none; }
   .ev3.has-article .ev-read { display: block; }
+  /* floating sticky back pill — stays reachable while the column scrolls */
+  .ev-back { display: inline-flex; position: sticky; top: 8px; z-index: 5; margin: 10px 0 2px 16px; padding: 6px 13px; border-radius: 20px; background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(8px); box-shadow: 0 2px 10px rgba(0, 0, 0, .15); }
+  .ev-read-bar { position: static; backdrop-filter: none; }   /* the back pill is the sticky nav on mobile */
 }
 .item-progressbar { position: absolute; left: 0; bottom: -1px; height: 2px; background: linear-gradient(90deg, var(--accent), var(--accent-hi)); opacity: .75; border-radius: 2px; transition: width .4s; }
 .item-min { font-variant-numeric: tabular-nums; }
