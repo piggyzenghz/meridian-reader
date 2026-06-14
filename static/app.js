@@ -472,6 +472,13 @@ function clusterBodyHtml(a, blocks) {
   return `<div class="fulltext-hint"><span>该源只提供摘要：${esc(a.summary || "无内容")}</span></div>`;
 }
 
+// event time/heat badge: 爆 (very hot) / 新 (surfaced in the last 6h)
+function eventBadge(c) {
+  if ((c.heat || 0) >= 85) return `<span class="ev-badge hot">爆</span>`;
+  if (c.first_seen && Date.now() / 1000 - c.first_seen < 6 * 3600) return `<span class="ev-badge new">新</span>`;
+  return "";
+}
+
 async function renderClustersView() {
   $("#view-title").textContent = "Events";
   $("#view-count").textContent = "";
@@ -495,9 +502,11 @@ async function renderClustersView() {
     if (!data.clusters?.length) { list.innerHTML = `<div class="ev-ph">还没有聚合的事件<br><span style="font-size:11px">同一事件被 ≥2 家媒体报道时自动归并</span></div>`; return; }
     list.innerHTML = data.clusters.map((c) => `
       <button class="ev-item" data-cluster="${c.id}" data-title="${esc(c.title_zh || c.top_title)}">
-        <span class="ev-item-badge">${c.heat ? `<span class="ev-item-heat">🔥 ${c.heat}</span>` : ""}<span>◈ ${c.source_count} 家 · ${c.member_count} 篇</span></span>
+        <span class="ev-item-badge">${eventBadge(c)}${c.heat ? `<span class="ev-item-heat">🔥 ${c.heat}</span>` : ""}<span>◈ ${c.source_count} 家 · ${c.member_count} 篇</span></span>
         <span class="ev-item-title">${esc(c.title_zh || c.top_title)}</span>
         ${c.title_zh ? `<span class="ev-item-title-en">${esc(c.top_title)}</span>` : ""}</button>`).join("");
+    if (EV.clusterId)   // ec-deep direct entry selected a cluster before the list loaded — sync highlight
+      $$(".ev-item").forEach((b) => b.classList.toggle("active", b.dataset.cluster == EV.clusterId));
   } catch {
     if (S.view.mode !== "clusters") return;   // switched away mid-fetch — don't clobber the new view
     const li = $("#ev-list"); if (li) li.innerHTML = `<div class="ev-ph">加载失败</div>`;
@@ -597,12 +606,32 @@ async function evShowAnalysis(cid, title) {
     const d = await api(`/api/cluster/${cid}/analysis`);
     if (EV.clusterId !== cid || !$("#ev-read-body")) return;
     renderAnalysis(d.analysis || {}, title);
+    injectHeatTrend(cid);   // heat trajectory sparkline (hides until history accrues)
   } catch (e) {
     if ($("#ev-read-body")) $("#ev-read-body").innerHTML = `<div class="ev-ph">分析生成失败：${esc(e.message)}</div>`;
   } finally { $(".ev-analyze-btn")?.classList.remove("busy"); }
 }
 
 function evOddsClass(o) { return /高|high/i.test(o) ? "hi" : /低|low/i.test(o) ? "lo" : "mid"; }
+
+// heat trajectory sparkline injected into the analysis report (event lifecycle)
+async function injectHeatTrend(cid) {
+  try {
+    const d = await api(`/api/cluster/${cid}/heat`);
+    if (EV.clusterId !== cid) return;
+    const h = (d.history || []).map((p) => p.heat);
+    if (h.length < 2) return;   // not enough snapshots yet
+    const sec = $("#ev-read-body .ev-analysis");
+    if (!sec || sec.querySelector(".an-heat")) return;   // gone or already injected
+    const up = h[h.length - 1] >= h[0];
+    const block = document.createElement("section");
+    block.className = "an-sec an-heat";
+    block.innerHTML = `<h3 class="an-h"><span>📈</span>热度轨迹</h3>
+      <div class="an-heat-row"><span class="an-heat-spark ${up ? "up" : "down"}">${sparkline(h)}</span>
+      <span class="an-heat-now">峰值 🔥${Math.max(...h)} · 现 🔥${h[h.length - 1]} · ${h.length} 个时点</span></div>`;
+    sec.appendChild(block);
+  } catch { /* best-effort */ }
+}
 
 function renderAnalysis(a, title) {
   // icon/name 必须是硬编码常量 — 两者都未经 esc()，只有 body 是已转义的 HTML
@@ -827,6 +856,7 @@ function eventCardHtml(lead, members, i) {
           <span class="ec-heat">🔥 ${Number(c.heat) || members.length}</span>
           <span class="ec-count">${Number(c.sources)} 家 · ${Number(c.members) || members.length} 篇</span>
           <span class="ec-favs">${favs.join("")}</span>
+          <button class="ec-deep" type="button">深度分析 ↗</button>
         </div>
         <h3 class="ec-title">${title}</h3>
       </div>
@@ -903,6 +933,14 @@ $("#list").addEventListener("click", async (e) => {
   if (hlText) { openArticle(+hlText.closest(".hl-card").dataset.article); return; }
   const itemTag = e.target.closest(".item-tag");
   if (itemTag) { jumpTag(itemTag.dataset.tag); return; }  // filter, don't open
+  const ecDeep = e.target.closest(".ec-deep");   // event card → open the Events workbench for it
+  if (ecDeep) {
+    const card = ecDeep.closest(".event-card");
+    const cid = card.dataset.cluster, title = card.querySelector(".ec-title").textContent;
+    S.view.mode = "clusters"; switchView();        // renders .ev3 skeleton synchronously
+    evSelectCluster(cid, title);                    // fill the middle column with this event
+    return;
+  }
   const ecHead = e.target.closest(".ec-head");   // event card → expand/collapse members inline
   if (ecHead) {
     const card = ecHead.closest(".event-card");
@@ -1182,6 +1220,16 @@ function renderReader() {
     html += `<div class="fulltext-hint"><span>全文提取失败，可打开原文阅读</span>
       <button class="pill ghost" id="btn-retry-fulltext">重试提取</button></div>`;
 
+  html += `<div class="ask-box">
+    <div class="ask-head"><svg class="ask-ic"><use href="#i-sparkle"/></svg> 就这篇追问 AI</div>
+    <form class="ask-form" id="ask-form">
+      <input id="ask-input" type="text" maxlength="500" autocomplete="off"
+        placeholder="核心结论？背景是什么？对我有什么影响？">
+      <button class="pill" type="submit">问</button>
+    </form>
+    <div class="ask-answer" id="ask-answer" aria-live="polite"></div>
+  </div>`;
+
   $("#reader-inner").innerHTML = html;
   $("#reader-inner").classList.toggle("bilingual", !!S.currentBlocks);
   // force eager on body images — container-type breaks lazy; also fixes the
@@ -1189,6 +1237,7 @@ function renderReader() {
   $$("#reader-inner img").forEach((im) => { im.loading = "eager"; });
   applyType();
   $("#btn-retry-fulltext")?.addEventListener("click", loadFulltext);
+  $("#ask-form")?.addEventListener("submit", askArticle);
   $("#btn-later").classList.toggle("active", !!a.read_later);
   applyHighlights();
   renderRelated();  // re-append related (survives full-text/translate re-renders)
@@ -1197,6 +1246,25 @@ function renderReader() {
     const el = $("#reader-scroll");
     requestAnimationFrame(() =>
       el.scrollTo({ top: (el.scrollHeight - el.clientHeight) * a.progress / 100 }));
+  }
+}
+
+async function askArticle(e) {
+  e.preventDefault();
+  const q = $("#ask-input")?.value.trim();
+  if (!q || !S.current) return;
+  const id = S.current.id;
+  $("#ask-answer").innerHTML = `<i class="spin-dot"></i> gpt-5.5 思考中…`;
+  const btn = $("#ask-form button"); if (btn) btn.disabled = true;
+  try {
+    const d = await api(`/api/articles/${id}/ask`, { method: "POST", body: { question: q } });
+    if (S.current?.id !== id) return;              // article switched away
+    const a2 = $("#ask-answer"); if (a2) a2.textContent = d.answer || "(无回答)";  // re-query: reader may have re-rendered
+  } catch (err) {
+    console.warn("ask failed:", err);
+    const a2 = $("#ask-answer"); if (a2) a2.textContent = "追问失败，请稍后再试";
+  } finally {
+    const b2 = $("#ask-form button"); if (b2) b2.disabled = false;
   }
 }
 
@@ -1924,6 +1992,13 @@ $("#btn-logout").addEventListener("click", async () => {
 // items live inside .ec-members and are reached by expanding, not by j/k).
 function listRows() { return $$("#list > .item, #list > .event-card"); }
 
+function copyArticle(a) {
+  if (!a || !navigator.clipboard) return;
+  navigator.clipboard.writeText(`${a.title}\n${a.link || ""}`.trim())
+    .then(() => toast("已复制 标题+链接"))
+    .catch(() => toast("复制失败"));
+}
+
 function moveSelection(delta) {
   const items = listRows();
   if (!items.length) return;
@@ -1972,6 +2047,13 @@ document.addEventListener("keydown", (e) => {
     case "r": manualRefresh(); break;
     case "t": $("#btn-titles").click(); break;
     case "g": if (!readerOpen) $("#btn-group").click(); break;
+    case "/": e.preventDefault(); openPalette(); break;
+    case "c": {
+      const a = readerOpen ? S.current
+        : S.articles.find((x) => x.id === +(listRows()[S.selectedIdx]?.dataset.id || 0));
+      copyArticle(a);
+      break;
+    }
     case "d": applyTheme(S.theme === "dark" ? "light" : "dark"); break;
     case ",": openSettings(); break;
   }

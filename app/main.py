@@ -743,6 +743,26 @@ async def translate_phrase(body: PhraseIn) -> Any:
     return result
 
 
+class AskIn(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+
+
+@app.post("/api/articles/{article_id}/ask", dependencies=[protected, ai_limited])
+async def ask_article(article_id: int, body: AskIn) -> Any:
+    """Ask gpt-5.5 a question about a specific article, grounded in its text."""
+    article = _get_article(article_id)
+    text = strip_tags(_content_of(article) or "") or (article["summary"] or "")
+    if len(text) < 40:
+        raise HTTPException(400, "article too short")
+    try:
+        answer = await translate.ask_article(article["title"], text,
+                                             body.question.strip(),
+                                             engine=_engine_for("summary"))
+    except Exception as exc:
+        return _translate_error(exc)
+    return {"answer": answer}
+
+
 class EngineIn(BaseModel):
     feature: str
     engine: str
@@ -1088,6 +1108,17 @@ async def cluster_members(cluster_id: int) -> dict[str, Any]:
             "FROM articles a JOIN feeds f ON f.id=a.feed_id "
             "WHERE a.cluster_id=? ORDER BY a.published DESC", (cluster_id,))]
     return {"members": rows, "count": len(rows)}
+
+
+@app.get("/api/cluster/{cluster_id}/heat", dependencies=[protected])
+async def cluster_heat(cluster_id: int) -> dict[str, Any]:
+    """Heat trajectory (生命周期曲线) — heat snapshots over time for a sparkline."""
+    with db.get_db() as conn:
+        rows = [{"ts": r["ts"], "heat": r["heat"], "sources": r["source_count"]}
+                for r in conn.execute(
+                    "SELECT ts, heat, source_count FROM cluster_heat_history "
+                    "WHERE cluster_id=? ORDER BY ts LIMIT 400", (cluster_id,))]
+    return {"history": rows}
 
 
 @app.get("/api/cluster/{cluster_id}/summary", dependencies=[protected, ai_limited])

@@ -331,6 +331,22 @@ async def score_clusters_ai(events: list[dict[str, Any]],
     return out
 
 
+async def ask_article(title: str, content: str, question: str,
+                      engine: str = "gpt55") -> str:
+    """Answer a user's question grounded in one article's text (interactive深读)."""
+    out = await _chat(
+        [
+            {"role": "system", "content": (
+                "你是阅读助手。严格依据用户提供的【文章正文】回答问题，简体中文，准确"
+                "简洁、有条理。正文未提及的内容明说“文章未提及”，绝不编造或外推。"
+            )},
+            {"role": "user", "content":
+                f"【标题】{title}\n\n【正文】\n{content[:9000]}\n\n【问题】{question}"},
+        ],
+        max_tokens=900, engine=engine)
+    return out.strip()
+
+
 async def translate_phrase(text: str, engine: str = "deepseek") -> dict[str, Any]:
     """Translate a selected word / phrase / sentence. For short selections also
     return a one-line gloss (part of speech / nuance); for long ones just the

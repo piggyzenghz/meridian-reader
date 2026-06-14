@@ -104,6 +104,17 @@ CREATE TABLE IF NOT EXISTS clusters (
     heat INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_clusters_lastseen ON clusters(last_seen DESC);
+
+-- per-refresh heat snapshots → an event's heat trajectory (生命周期曲线)
+CREATE TABLE IF NOT EXISTS cluster_heat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id INTEGER NOT NULL,
+    ts INTEGER NOT NULL,
+    heat INTEGER NOT NULL DEFAULT 0,
+    source_count INTEGER NOT NULL DEFAULT 0,
+    member_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_heathist ON cluster_heat_history(cluster_id, ts);
 """
 
 

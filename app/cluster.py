@@ -255,6 +255,19 @@ async def score_clusters() -> int:
     return len(fresh)
 
 
+def _snapshot_heat() -> None:
+    """Record one heat point per scored cluster → event heat trajectory. Pruned to 7d."""
+    now = int(time.time())
+    with db.get_db() as conn:
+        conn.executemany(
+            "INSERT INTO cluster_heat_history (cluster_id, ts, heat, source_count, member_count) "
+            "VALUES (?,?,?,?,?)",
+            [(r["id"], now, r["heat"], r["source_count"], r["member_count"])
+             for r in conn.execute("SELECT id, heat, source_count, member_count "
+                                   "FROM clusters WHERE heat>0")])
+        conn.execute("DELETE FROM cluster_heat_history WHERE ts < ?", (now - 7 * 86400,))
+
+
 async def run_once() -> int:
     """Embed new articles, rebuild clusters, then gpt-5.5 score them. Called from
     the refresh loop."""
@@ -267,4 +280,8 @@ async def run_once() -> int:
             await score_clusters()
         except Exception:
             log.warning("score_clusters best-effort failed", exc_info=True)
+        try:
+            await asyncio.to_thread(_snapshot_heat)   # build the heat trajectory
+        except Exception:
+            log.warning("heat snapshot failed", exc_info=True)
         return n
