@@ -14,6 +14,7 @@ const S = {
   currentBlocks: null,
   selectedIdx: -1,
   titleTrans: localStorage.getItem("m.titles") === "1",
+  groupEvents: localStorage.getItem("m.group") !== "0",  // Story Collapse (default on)
   theme: localStorage.getItem("m.theme") || "dark",
   pollTimer: 0,
 };
@@ -343,6 +344,7 @@ function switchView() {
   $(".seg").style.display = isList ? "" : "none";
   $("#btn-readall").style.display = isList ? "" : "none";
   $("#btn-titles").style.display = isList ? "" : "none";
+  $("#btn-group").style.display = isList ? "" : "none";
   $("#ticker").style.display = isList ? "" : "none";
   // note: no View Transition here — rapid category switches abort each other
   // and leave stale snapshots; the per-item fade-up is animation enough
@@ -801,6 +803,39 @@ function itemHtml(a, i) {
   </article>`;
 }
 
+// Story Collapse: one card for a same-event multi-source cluster. Collapsed by
+// default (中文事件标题 + 热度 + N家·M篇 + 各源 favicon 带); click to expand the
+// member reports inline (each with its OWN source title — the multi-source value).
+function eventCardHtml(lead, members, i) {
+  const c = lead.cluster;
+  const title = esc(c.title_zh || lead.title_zh || lead.title);
+  const unread = members.some((m) => !m.is_read);
+  const favs = [];
+  const seenFeed = new Set();
+  for (const m of members) {
+    if (seenFeed.has(m.feed_id)) continue;
+    seenFeed.add(m.feed_id);
+    favs.push(srcBadge(m.feed_title, m.feed_id));
+    if (favs.length >= 7) break;
+  }
+  const memberHtml = members.map((m, j) => itemHtml(m, j)).join("");
+  return `<article class="event-card ${unread ? "" : "read"}" data-cluster="${Number(c.id)}" style="--i:${i}">
+    <div class="ec-head" tabindex="0" role="button" aria-expanded="false" aria-label="${title}">
+      <span class="ec-dot"></span>
+      <div class="ec-body">
+        <div class="ec-meta">
+          <span class="ec-heat">🔥 ${Number(c.heat) || members.length}</span>
+          <span class="ec-count">${Number(c.sources)} 家 · ${Number(c.members) || members.length} 篇</span>
+          <span class="ec-favs">${favs.join("")}</span>
+        </div>
+        <h3 class="ec-title">${title}</h3>
+      </div>
+      <span class="ec-caret" aria-hidden="true">▾</span>
+    </div>
+    <div class="ec-members">${memberHtml}</div>
+  </article>`;
+}
+
 function renderList() {
   $("#view-title").textContent = viewTitle();
   $("#view-count").textContent = S.articles.length
@@ -813,15 +848,42 @@ function renderList() {
     $("#list-end").classList.add("hidden");
     return;
   }
-  let html = "", lastGroup = "", idx = 0;
+  const group = S.groupEvents;
+  const byCluster = new Map();
+  if (group) {
+    for (const a of S.articles) {
+      if (!a.cluster) continue;
+      if (!byCluster.has(a.cluster.id)) byCluster.set(a.cluster.id, []);
+      byCluster.get(a.cluster.id).push(a);
+    }
+  }
+  // build render units first (one event card per multi-source cluster, else one
+  // item) so the per-day header count reflects what's actually shown, not folded.
+  const units = [];
+  const seen = new Set();
   for (const a of S.articles) {
-    const g = groupKey(a.published);
+    if (group && a.cluster && byCluster.get(a.cluster.id).length >= 2) {
+      if (seen.has(a.cluster.id)) continue;
+      seen.add(a.cluster.id);
+      units.push({ ev: a, members: byCluster.get(a.cluster.id) });
+    } else {
+      units.push({ a });
+    }
+  }
+  const dayCount = {};
+  for (const u of units) {
+    const g = groupKey((u.a || u.ev).published);
+    dayCount[g] = (dayCount[g] || 0) + 1;
+  }
+  let html = "", lastGroup = "", idx = 0;
+  for (const u of units) {
+    const art = u.a || u.ev;
+    const g = groupKey(art.published);
     if (g !== lastGroup) {
-      const n = S.articles.filter((x) => groupKey(x.published) === g).length;
-      html += `<div class="group-head">${g}<span class="num">№ ${n}</span></div>`;
+      html += `<div class="group-head">${g}<span class="num">№ ${dayCount[g]}</span></div>`;
       lastGroup = g;
     }
-    html += itemHtml(a, idx++);
+    html += u.ev ? eventCardHtml(u.ev, u.members, idx++) : itemHtml(u.a, idx++);
   }
   $("#list").innerHTML = html;
   $("#list-end").classList.toggle("hidden", !!S.nextBefore);
@@ -841,13 +903,25 @@ $("#list").addEventListener("click", async (e) => {
   if (hlText) { openArticle(+hlText.closest(".hl-card").dataset.article); return; }
   const itemTag = e.target.closest(".item-tag");
   if (itemTag) { jumpTag(itemTag.dataset.tag); return; }  // filter, don't open
+  const ecHead = e.target.closest(".ec-head");   // event card → expand/collapse members inline
+  if (ecHead) {
+    const card = ecHead.closest(".event-card");
+    ecHead.setAttribute("aria-expanded", card.classList.toggle("expanded") ? "true" : "false");
+    return;
+  }
   const item = e.target.closest(".item");
   if (item) openArticle(+item.dataset.id);
 });
-// keyboard: Enter/Space on a focused list item opens it (items are tabindex=0).
+// keyboard: Enter/Space on a focused list item opens it; on an event-card head, expands it.
 // stopPropagation so the global Enter handler (j/k selection) doesn't also fire.
 $("#list").addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;
+  const ecHead = e.target.closest?.(".ec-head");
+  if (ecHead && e.target === ecHead) {
+    e.preventDefault(); e.stopPropagation();
+    ecHead.setAttribute("aria-expanded", ecHead.closest(".event-card").classList.toggle("expanded") ? "true" : "false");
+    return;
+  }
   const item = e.target.closest?.(".item");
   if (item && e.target === item) {
     e.preventDefault(); e.stopPropagation();
@@ -901,6 +975,14 @@ $("#btn-titles").addEventListener("click", () => {
   $("#btn-titles").classList.toggle("on", S.titleTrans);
   renderList();
   if (S.titleTrans) translateVisibleTitles();
+});
+
+$("#btn-group").addEventListener("click", () => {
+  S.groupEvents = !S.groupEvents;
+  localStorage.setItem("m.group", S.groupEvents ? "1" : "0");
+  $("#btn-group").classList.toggle("on", S.groupEvents);
+  S.selectedIdx = -1;   // row set changed — start j/k fresh
+  renderList();
 });
 
 /* ── reader ──────────────────────────────────────── */
@@ -1001,6 +1083,13 @@ async function pollExtraction(id, token, tries = 0) {
 function markItemRead(id) {
   const el = $(`.item[data-id="${id}"]`);
   if (el) el.classList.add("read");
+  // collapsed event card → mark it read once all its loaded members are read
+  const art = S.articles.find((x) => x.id === id);
+  if (art?.cluster) {
+    const card = $(`.event-card[data-cluster="${art.cluster.id}"]`);
+    if (card && S.articles.filter((x) => x.cluster?.id === art.cluster.id).every((x) => x.is_read))
+      card.classList.add("read");
+  }
 }
 
 function decUnread(a) {
@@ -1831,8 +1920,12 @@ $("#btn-logout").addEventListener("click", async () => {
 
 /* ── keyboard ────────────────────────────────────── */
 
+// top-level selectable rows = standalone items + collapsed event cards (member
+// items live inside .ec-members and are reached by expanding, not by j/k).
+function listRows() { return $$("#list > .item, #list > .event-card"); }
+
 function moveSelection(delta) {
-  const items = $$("#list .item");
+  const items = listRows();
   if (!items.length) return;
   S.selectedIdx = Math.max(0, Math.min(items.length - 1, S.selectedIdx + delta));
   items.forEach((el, i) => el.style.background =
@@ -1866,8 +1959,10 @@ document.addEventListener("keydown", (e) => {
     case "j": readerOpen ? navigateArticle(1) : moveSelection(1); break;
     case "k": readerOpen ? navigateArticle(-1) : moveSelection(-1); break;
     case "o": case "Enter": {
-      const el = $$("#list .item")[S.selectedIdx];
-      if (el) openArticle(+el.dataset.id);
+      const el = listRows()[S.selectedIdx];
+      if (!el) break;
+      if (el.classList.contains("event-card")) el.querySelector(".ec-head")?.click();  // expand
+      else openArticle(+el.dataset.id);
       break;
     }
     case "s": if (S.current) $("#btn-star").click(); break;
@@ -1876,6 +1971,7 @@ document.addEventListener("keydown", (e) => {
     case "p": if (S.current) $("#btn-listen").click(); break;
     case "r": manualRefresh(); break;
     case "t": $("#btn-titles").click(); break;
+    case "g": if (!readerOpen) $("#btn-group").click(); break;
     case "d": applyTheme(S.theme === "dark" ? "light" : "dark"); break;
     case ",": openSettings(); break;
   }
@@ -1889,4 +1985,5 @@ setInterval(() => {
 
 /* ── go ──────────────────────────────────────────── */
 $("#btn-titles").classList.toggle("on", S.titleTrans);
+$("#btn-group").classList.toggle("on", S.groupEvents);
 boot();

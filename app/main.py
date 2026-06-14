@@ -260,14 +260,26 @@ async def list_articles(
             f"""SELECT a.id, a.feed_id, a.link, a.title, a.title_zh, a.author,
                        a.published, a.summary, a.image, a.is_read, a.is_starred,
                        a.read_later, a.progress, a.word_count,
-                       a.body_zh, f.title AS feed_title, f.category
+                       a.body_zh, f.title AS feed_title, f.category, a.cluster_id,
+                       cl.title_zh AS cl_title_zh, cl.heat AS cl_heat,
+                       cl.source_count AS cl_sources, cl.member_count AS cl_members
                 FROM articles a JOIN feeds f ON f.id=a.feed_id
+                LEFT JOIN clusters cl ON cl.id=a.cluster_id
                 WHERE {' AND '.join(where) if where else '1=1'}
                 ORDER BY a.published DESC, a.id DESC LIMIT ?""",
             (*params, limit + 1),
         ).fetchall()
     has_more = len(rows) > limit
-    items = [db.article_row_to_listing(row) for row in rows[:limit]]
+    items = []
+    for row in rows[:limit]:
+        it = db.article_row_to_listing(row)
+        # Story Collapse: attach cluster meta only for multi-source events, so the
+        # list can fold same-event reports into one card (reuses the clustering).
+        if row["cluster_id"] and (row["cl_sources"] or 0) >= 2:
+            it["cluster"] = {"id": row["cluster_id"], "title_zh": row["cl_title_zh"],
+                             "heat": row["cl_heat"] or 0, "sources": row["cl_sources"],
+                             "members": row["cl_members"]}
+        items.append(it)
     if items:  # attach tags for the whole page in one query
         ids = [it["id"] for it in items]
         ph = ",".join("?" * len(ids))
