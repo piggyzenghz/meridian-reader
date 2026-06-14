@@ -179,23 +179,43 @@ async def fetch_one(client: httpx.AsyncClient, feed: sqlite3.Row) -> int:
         headers["If-Modified-Since"] = feed["last_modified"]
     now = int(time.time())
     try:
-        async with client.stream("GET", feed["url"], headers=headers) as resp:
-            if resp.status_code == 304:
-                with db.get_db() as conn:
-                    conn.execute(
-                        "UPDATE feeds SET last_fetched=?, last_error='',"
-                        " error_count=0 WHERE id=?", (now, feed["id"]),
-                    )
-                return 0
-            resp.raise_for_status()
-            chunks: list[bytes] = []
-            size = 0
-            async for chunk in resp.aiter_bytes(65536):
-                size += len(chunk)
-                if size > MAX_FEED_BYTES:
-                    raise ValueError("feed response exceeds 10MB")
-                chunks.append(chunk)
-            body = b"".join(chunks)
+        # Manual redirect-follow, SSRF-guarding EACH hop's target — a public
+        # feed URL that 302s to an internal address (e.g. 169.254.169.254) is
+        # rejected before that hop is requested. (client default follow is off
+        # here via follow_redirects=False.)
+        url = feed["url"]
+        body = None
+        for _hop in range(6):
+            # the stored feed URL is trusted (operator-added — may be an internal
+            # RSSHub at 127.0.0.1). Only SSRF-guard REDIRECT targets, which the
+            # feed server controls and could point at an internal address.
+            if _hop:
+                await asyncio.to_thread(extract.assert_public_url, url)
+            async with client.stream("GET", url, headers=headers,
+                                     follow_redirects=False) as resp:
+                loc = resp.headers.get("location", "")
+                if resp.status_code in (301, 302, 303, 307, 308) and loc:
+                    url = str(resp.url.join(loc))
+                    continue
+                if resp.status_code == 304:
+                    with db.get_db() as conn:
+                        conn.execute(
+                            "UPDATE feeds SET last_fetched=?, last_error='',"
+                            " error_count=0 WHERE id=?", (now, feed["id"]),
+                        )
+                    return 0
+                resp.raise_for_status()
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in resp.aiter_bytes(65536):
+                    size += len(chunk)
+                    if size > MAX_FEED_BYTES:
+                        raise ValueError("feed response exceeds 10MB")
+                    chunks.append(chunk)
+                body = b"".join(chunks)
+                break
+        if body is None:
+            raise ValueError("too many redirects")
     except Exception as exc:
         message = _scrub_url(f"{type(exc).__name__}: {exc}")[:300]
         log.warning("fetch failed %s: %s", _scrub_url(feed["url"]), message)
@@ -252,12 +272,7 @@ async def refresh_all() -> int:
 
                 async def guarded(feed: sqlite3.Row) -> int:
                     async with semaphore:
-                        try:  # defense-in-depth SSRF guard on every fetch
-                            await asyncio.to_thread(extract.assert_public_url, feed["url"])
-                        except Exception:
-                            log.warning("SSRF guard rejected %s", _scrub_url(feed["url"]))
-                            return 0
-                        return await fetch_one(client, feed)
+                        return await fetch_one(client, feed)  # fetch_one SSRF-guards each hop
 
                 results = await asyncio.gather(
                     *(guarded(feed) for feed in feeds), return_exceptions=True
@@ -277,7 +292,7 @@ async def refresh_all() -> int:
 
 async def refresh_loop() -> None:
     """Background task started from app lifespan."""
-    from . import digest, tagger  # late import to avoid a cycle
+    from . import cluster, digest, tagger  # late import to avoid a cycle
     await asyncio.sleep(2)
     while True:
         try:
@@ -292,4 +307,8 @@ async def refresh_loop() -> None:
             await digest.ensure_today()
         except Exception:
             log.exception("digest check failed")
+        try:
+            await cluster.run_once()  # embed new articles + rebuild story clusters
+        except Exception:
+            log.exception("clustering failed")
         await asyncio.sleep(config.FETCH_INTERVAL_MIN * 60)

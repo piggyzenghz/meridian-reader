@@ -258,6 +258,7 @@ function renderNav() {
   const u = S.state.unread || {};
   const total = Object.values(u).reduce((a, b) => a + b, 0);
   let html = iconNavItem({ mode: "digest", icon: "i-news", en: "Briefing", zh: "今日简报", color: "var(--accent)" });
+  html += iconNavItem({ mode: "clusters", icon: "i-link2", en: "Events", zh: "事件聚合", color: "var(--c-x)" });
   html += navItem({ key: "", en: "Today", zh: "全部", count: total, color: "var(--accent)" });
   for (const cat of S.state.categories)
     html += navItem({ key: cat, en: CAT_LABEL[cat][0], zh: CAT_LABEL[cat][1], count: u[cat] || 0, color: CAT_VAR[cat] });
@@ -312,6 +313,7 @@ $("#sidebar").addEventListener("click", (e) => {
 
 function viewTitle() {
   if (S.view.mode === "digest") return "Briefing";
+  if (S.view.mode === "clusters") return "Events";
   if (S.view.mode === "highlights") return "Highlights";
   if (S.view.monitor) return `◎ ${S.view.monitor}`;
   if (S.view.tag) return `# ${S.view.tag}`;
@@ -337,6 +339,7 @@ function switchView() {
   // and leave stale snapshots; the per-item fade-up is animation enough
   if (S.view.mode !== "list") { S.articles = []; S.selectedIdx = -1; S.nextBefore = 0; }
   if (S.view.mode === "digest") renderDigestView();
+  else if (S.view.mode === "clusters") renderClustersView();
   else if (S.view.mode === "highlights") renderHighlightsView();
   else {
     // serve the first page from cache instantly (no skeleton flash), then
@@ -433,6 +436,47 @@ async function renderDigestView(forceGen = false) {
   refreshState(false);
 }
 window.__retryDigest = () => renderDigestView(true);
+
+/* ── story clusters (events) ─────────────────────── */
+async function renderClustersView() {
+  $("#view-title").textContent = "Events";
+  $("#view-count").textContent = "";
+  const wrap = $("#list");
+  wrap.innerHTML = `<div class="clusters-wrap"><div class="cluster-card"><div class="sk-line" style="width:60%;height:16px"></div></div></div>`;
+  try {
+    const data = await api("/api/clusters");
+    if (!data.clusters?.length) {
+      wrap.innerHTML = `<div class="clusters-wrap"><div class="clusters-empty">还没有聚合的事件<br><span>同一事件被 ≥2 家媒体报道时会自动归并到这里</span></div></div>`;
+      return;
+    }
+    wrap.innerHTML = `<div class="clusters-wrap">` + data.clusters.map((c) => `
+      <article class="cluster-card" data-cluster="${c.id}">
+        <div class="cluster-meta"><span class="cluster-badge">◈ ${c.source_count} 家媒体 · ${c.member_count} 篇报道</span><span class="cluster-time">${fmtTime(c.last_seen)}</span></div>
+        <h3 class="cluster-title">${esc(c.top_title)}</h3>
+        <div class="cluster-members"></div>
+      </article>`).join("") + `</div>`;
+  } catch (e) {
+    wrap.innerHTML = `<div class="clusters-wrap"><div class="clusters-empty">加载失败</div></div>`;
+  }
+}
+$("#list").addEventListener("click", async (e) => {
+  if (S.view.mode !== "clusters") return;
+  const card = e.target.closest(".cluster-card");
+  if (!card) return;
+  const cid = card.dataset.cluster;
+  const mem = card.querySelector(".cluster-members");
+  if (mem.dataset.loaded) { card.classList.toggle("open"); return; }
+  card.classList.add("open");
+  mem.innerHTML = `<div class="sk-line" style="width:40%;height:12px;margin:6px 0"></div>`;
+  try {
+    const data = await api(`/api/cluster/${cid}`);
+    mem.innerHTML = data.members.map((m) => `
+      <a class="cluster-member" href="${esc(m.link)}" target="_blank" rel="noopener" style="--cat:${CAT_VAR[m.category] || "var(--accent)"}">
+        ${srcBadge(m.feed_title, m.feed_id)}<span class="cm-src">${esc(m.feed_title)}</span><span class="cm-title">${esc(m.title_zh || m.title)}</span>
+      </a>`).join("");
+    mem.dataset.loaded = "1";
+  } catch { mem.innerHTML = `<span class="cm-err">加载失败</span>`; }
+});
 
 async function loadMarkets() {
   const el = $("#digest-market");

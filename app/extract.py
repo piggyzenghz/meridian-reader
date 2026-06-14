@@ -185,6 +185,9 @@ _HF_CHROME = re.compile(
     r"(?:Enterprise Article|Upvote \d|Published [A-Z][a-z]+ \d)"
     r"(?:(?!</p>).)*?</p>", re.I | re.S)
 _EMPTY_ANCHOR = re.compile(r"<a\b[^>]*>\s*</a>")
+# 36氪 appends a fixed channel-blurb tail to extracted articles; drop those paras.
+_36KR_TAIL = re.compile(
+    r"<p>[^<]*(?:推送和解读前沿|一级市场金融信息|聚焦全球优秀创业者|项目融资率接近)[^<]*</p>")
 
 # Cookie-consent walls (Didomi etc.) that trafilatura mistakes for the article
 # body — they sail past the length gate, so detect them and fall through to Jina.
@@ -206,6 +209,9 @@ def _clean_extracted(html: str, host: str) -> str:
     if "huggingface.co" in host:
         html = _HF_CHROME.sub("", html)
         html = _EMPTY_ANCHOR.sub("", html)
+        html = html.replace("undfined", "")  # HF author-name glue artifact
+    if "36kr.com" in host:
+        html = _36KR_TAIL.sub("", html)
     return html.strip()
 
 
@@ -231,6 +237,9 @@ async def fetch_fulltext(url: str) -> str:
         html = ""
         try:
             resp = await client.get(url)
+            # redirects may have landed on an internal address — re-check the
+            # final URL and discard the body if so (don't process internal data)
+            await asyncio.to_thread(assert_public_url, str(resp.url))
             resp.raise_for_status()
             html = resp.text
         except Exception as exc:

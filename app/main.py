@@ -15,8 +15,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, config, db, digest, discover, extract, favicon, fetcher,
-               market, tagger, translate)
+from . import (auth, cluster, config, db, digest, discover, extract, favicon,
+               fetcher, market, tagger, translate)
 from .sanitize import merge_lost_images, needs_translation, split_blocks, strip_tags
 
 logging.basicConfig(level=logging.INFO,
@@ -1000,6 +1000,29 @@ async def import_opml(body: OpmlIn) -> dict[str, Any]:
     if added:
         asyncio.create_task(_hydrate())
     return {"imported": len(added), "seen": len(candidates)}
+
+
+@app.get("/api/clusters", dependencies=[protected])
+async def list_clusters() -> dict[str, Any]:
+    """Surfaced event clusters (same event across >=2 sources), newest first."""
+    with db.get_db() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, top_title, member_count, source_count, first_seen, last_seen "
+            "FROM clusters ORDER BY source_count DESC, last_seen DESC LIMIT 60")]
+    return {"clusters": rows}
+
+
+@app.get("/api/cluster/{cluster_id}", dependencies=[protected])
+async def cluster_members(cluster_id: int) -> dict[str, Any]:
+    """A cluster's member articles — each source's OWN title (not translated),
+    so the framing differences across outlets are visible."""
+    with db.get_db() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT a.id, a.title, a.title_zh, a.link, a.published, a.image, "
+            "a.summary, f.id AS feed_id, f.title AS feed_title, f.category, f.site_url "
+            "FROM articles a JOIN feeds f ON f.id=a.feed_id "
+            "WHERE a.cluster_id=? ORDER BY a.published DESC", (cluster_id,))]
+    return {"members": rows, "count": len(rows)}
 
 
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
