@@ -580,11 +580,15 @@ function renderAnalysis(a, title) {
   // icon/name 必须是硬编码常量 — 两者都未经 esc()，只有 body 是已转义的 HTML
   const sec = (icon, name, body) => body ? `<section class="an-sec"><h3 class="an-h"><span>${icon}</span>${name}</h3>${body}</section>` : "";
   const facts = a.facts?.length
-    ? `<div class="an-facts">${a.facts.map((f) => `<div class="an-fact"><div class="an-fact-v">${esc(f.v)}</div><div class="an-fact-k">${esc(f.k)}</div></div>`).join("")}</div>` : "";
+    ? `<div class="an-facts">${a.facts.map((f) => {
+        const long = (f.v || "").length > 9;   // long values render as quiet body text, not a big number
+        return `<div class="an-fact${long ? " long" : ""}"><div class="an-fact-k">${esc(f.k)}</div><div class="an-fact-v">${esc(f.v)}</div></div>`;
+      }).join("")}</div>` : "";
   const timeline = a.timeline?.length
     ? sec("⏱", "事件时间线", `<div class="an-timeline">${a.timeline.map((t) => `<div class="an-tl"><div class="an-tl-dot"></div><div class="an-tl-t">${esc(t.t)}</div><div class="an-tl-e">${esc(t.e)}</div></div>`).join("")}</div>`) : "";
+  const PC = ["var(--c-markets)", "var(--c-tech)", "var(--c-ai)", "var(--c-cn)", "var(--c-world)", "var(--c-x)"];
   const persp = a.perspectives?.length
-    ? sec("👥", "各方观点", `<div class="an-persp">${a.perspectives.map((p) => `<div class="an-p"><div class="an-p-who">${esc(p.who)}</div><div class="an-p-view">${esc(p.view)}</div></div>`).join("")}</div>`) : "";
+    ? sec("👥", "各方观点", `<div class="an-persp">${a.perspectives.map((p, i) => `<div class="an-p" style="--pc:${PC[i % PC.length]}"><div class="an-p-who">${esc(p.who)}</div><div class="an-p-view">${esc(p.view)}</div></div>`).join("")}</div>`) : "";
   const impact = a.impact?.length
     ? sec("💥", "影响分析", `<div class="an-impact">${a.impact.map((i) => `<div class="an-i"><span class="an-i-area">${esc(i.area)}</span><span class="an-i-detail">${esc(i.detail)}</span></div>`).join("")}</div>`) : "";
   const contro = a.controversy ? sec("⚡", "争议焦点", `<div class="an-contro">${esc(a.controversy)}</div>`) : "";
