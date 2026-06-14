@@ -1820,7 +1820,7 @@ function moveSelection(delta) {
   if (!items.length) return;
   S.selectedIdx = Math.max(0, Math.min(items.length - 1, S.selectedIdx + delta));
   items.forEach((el, i) => el.style.background =
-    i === S.selectedIdx ? "color-mix(in srgb, var(--surface-2) 85%, transparent)" : "");
+    i === S.selectedIdx ? "var(--active-bg)" : "");
   items[S.selectedIdx].scrollIntoView({ block: "nearest", behavior: scrollBehavior() });
 }
 

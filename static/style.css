@@ -60,6 +60,7 @@
   --gold: #f2b56c;        /* decorative accent (gradients / hairlines) */
   --active-bg: var(--surface-2);   /* keep dark active/hover as-is */
   --hover-bg: var(--surface);
+  --dec: var(--accent);            /* dark: decorative dots stay amber */
   --hl-bg: rgba(229, 161, 88, .26);
   --glass: rgba(16, 19, 27, .78);
   --shadow-lg: 0 24px 80px rgba(0, 0, 0, .55);
@@ -82,8 +83,9 @@
   --accent: #876a10;      /* 秋香深金 — links / active / brand */
   --accent-hi: #6f560c;   /* deeper gold — hover / .pill.on fill */
   --accent-ink: #ffffff;  /* white text on gold */
-  --active-bg: color-mix(in srgb, var(--gold) 26%, transparent);  /* gold highlight (active) */
-  --hover-bg: color-mix(in srgb, var(--gold) 11%, transparent);   /* faint gold hover */
+  --active-bg: color-mix(in srgb, var(--gold) 26%, transparent);  /* gold highlight (active/select) */
+  --hover-bg: color-mix(in srgb, var(--gold) 13%, transparent);   /* faint gold hover */
+  --dec: #3e5c6e;         /* 黛青 — decorative accent (dots / 点缀), distinct from gold highlight */
   --zh: #7a6420;          /* 秋香-brown — Chinese translation text */
   --c-markets: #467455;   /* 竹松绿 (from 竹月) */
   --c-world: #3e5c6e;     /* 黛青 */
@@ -365,9 +367,9 @@ svg { display: block; }
   contain-intrinsic-size: auto 118px;
 }
 @keyframes fade-up { from { opacity: 0; transform: translateY(14px); } }
-.item:hover { background: color-mix(in srgb, var(--surface) 72%, transparent); }
+.item:hover { background: var(--hover-bg); }
 .item:hover .item-thumb img { transform: scale(1.05); }
-.item-dot { margin-top: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 9px color-mix(in srgb, var(--accent) 60%, transparent); transition: opacity .3s, transform .3s; }
+.item-dot { margin-top: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--dec); box-shadow: 0 0 9px color-mix(in srgb, var(--dec) 55%, transparent); transition: opacity .3s, transform .3s; }
 .item.read .item-dot { opacity: 0; transform: scale(.4); }
 .item-body { min-width: 0; }
 .item-meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-3); margin-bottom: 5px; }
