@@ -65,8 +65,8 @@
 }
 [data-theme="light"] {
   /* 乳白 · China-traditional-colors palette
-     base 乳白 #F9F4DC · 黛青 #3E5C6E (primary) · 秋香 #D9B611 (gold highlight)
-     · 藕荷 #E4C6D0 / 竹月 #C7D7C0 informing the soft category hues */
+     base 乳白 #F9F4DC · 秋香 gold = unified accent (deep #876A10 readable / bright
+     #D9B611 decorative) · 黛青/藕荷/竹月 inform the category hues (left-rail logic) */
   color-scheme: light;
   --bg: #f9f4dc;          /* 乳白 */
   --bg-elev: #fdf9e8;     /* lifted milk */
@@ -77,9 +77,9 @@
   --text: #2b2a20;        /* warm ink */
   --text-2: #5b5746;      /* muted */
   --text-3: #6c6850;      /* faint — AA-safe for meta text */
-  --accent: #3e5c6e;      /* 黛青 — links / active / brand */
-  --accent-hi: #314a5a;   /* deeper 黛青 — hover / fills / gradient end */
-  --accent-ink: #f9f4dc;  /* 乳白 — text on 黛青 */
+  --accent: #876a10;      /* 秋香深金 — links / active / brand (warm, unifies the UI) */
+  --accent-hi: #6f560c;   /* deeper gold — hover / .pill.on fill (乳白 text stays readable) */
+  --accent-ink: #f9f4dc;  /* 乳白 — text on gold */
   --zh: #7a6420;          /* 秋香-brown — Chinese translation text */
   --c-markets: #467455;   /* 竹松绿 (from 竹月) */
   --c-world: #3e5c6e;     /* 黛青 */
