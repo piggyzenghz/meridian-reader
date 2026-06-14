@@ -61,6 +61,7 @@
   --active-bg: var(--surface-2);   /* keep dark active/hover as-is */
   --hover-bg: var(--surface);
   --dec: var(--accent);            /* dark: decorative dots stay amber */
+  --bamboo: #8fbf9a;               /* 竹月绿 — hover edge accent line */
   --hl-bg: rgba(229, 161, 88, .26);
   --glass: rgba(16, 19, 27, .78);
   --shadow-lg: 0 24px 80px rgba(0, 0, 0, .55);
@@ -86,6 +87,7 @@
   --active-bg: color-mix(in srgb, var(--gold) 26%, transparent);  /* gold highlight (active/select) */
   --hover-bg: color-mix(in srgb, var(--gold) 13%, transparent);   /* faint gold hover */
   --dec: #3e5c6e;         /* 黛青 — decorative accent (dots / 点缀), distinct from gold highlight */
+  --bamboo: #6f9e78;      /* 竹月绿 — hover edge accent line */
   --zh: #7a6420;          /* 秋香-brown — Chinese translation text */
   --c-markets: #467455;   /* 竹松绿 (from 竹月) */
   --c-world: #3e5c6e;     /* 黛青 */
@@ -164,7 +166,7 @@ svg { display: block; }
 .auth-orbit {
   position: absolute; width: 900px; height: 900px; left: 50%; top: -30%;
   transform: translateX(-50%);
-  background: conic-gradient(from 0deg, transparent 10%, color-mix(in srgb, var(--accent) 55%, transparent) 28%, transparent 46%, color-mix(in srgb, #5ea8fa 35%, transparent) 70%, transparent 90%);
+  background: conic-gradient(from 0deg, transparent 10%, color-mix(in srgb, var(--accent) 55%, transparent) 28%, transparent 46%, color-mix(in srgb, var(--dec) 38%, transparent) 70%, transparent 90%);
   border-radius: 50%; filter: blur(110px); opacity: .3;
   animation: orbit 26s linear infinite;
 }
@@ -368,6 +370,7 @@ svg { display: block; }
 }
 @keyframes fade-up { from { opacity: 0; transform: translateY(14px); } }
 .item:hover { background: var(--hover-bg); }
+.item:hover::before { content: ""; position: absolute; left: 0; top: 14%; bottom: 14%; width: 3px; border-radius: 0 3px 3px 0; background: var(--bamboo); }
 .item:hover .item-thumb img { transform: scale(1.05); }
 .item-dot { margin-top: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--dec); box-shadow: 0 0 9px color-mix(in srgb, var(--dec) 55%, transparent); transition: opacity .3s, transform .3s; }
 .item.read .item-dot { opacity: 0; transform: scale(.4); }
@@ -826,7 +829,7 @@ mark.hl { background: var(--hl-bg); color: inherit; border-radius: 3px; padding:
 .digest-wrap { max-width: 760px; margin: 0 auto; padding: 34px 28px 120px; animation: fade-up .5s var(--ease-spring); }
 .digest-layout { max-width: 1140px; margin: 0 auto; padding: 34px 30px 120px; display: grid; grid-template-columns: 1fr 290px; gap: 44px; align-items: start; animation: fade-up .5s var(--ease-spring); }
 .digest-main { min-width: 0; }
-.digest-market { position: sticky; top: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 16px 10px; }
+.digest-market { position: sticky; top: 18px; background: color-mix(in srgb, var(--gold) 18%, var(--surface)); border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent); border-radius: 16px; padding: 16px 16px 10px; }
 .market-head { font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--text-3); padding: 2px 4px 12px; }
 .market-row { display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; gap: 1px 10px; padding: 9px 6px; border-top: 1px solid var(--line); align-items: baseline; }
 .market-name { font-size: 13.5px; font-weight: 560; color: var(--text); }
