@@ -7,6 +7,7 @@ const S = {
   state: null,            // /api/state payload
   articles: [],
   nextBefore: 0,
+  nextBeforeId: 0,        // compound pagination cursor (published, id)
   loadingMore: false,
   view: { mode: "list", category: "", feedId: 0, filter: "all", tag: "", monitor: "", q: "" },
   current: null,          // open article detail
@@ -339,7 +340,7 @@ function switchView() {
   $("#ticker").style.display = isList ? "" : "none";
   // note: no View Transition here — rapid category switches abort each other
   // and leave stale snapshots; the per-item fade-up is animation enough
-  if (S.view.mode !== "list") { S.articles = []; S.selectedIdx = -1; S.nextBefore = 0; }
+  if (S.view.mode !== "list") { S.articles = []; S.selectedIdx = -1; S.nextBefore = 0; S.nextBeforeId = 0; }
   if (S.view.mode === "digest") renderDigestView();
   else if (S.view.mode === "clusters") renderClustersView();
   else if (S.view.mode === "highlights") renderHighlightsView();
@@ -348,7 +349,8 @@ function switchView() {
     // silently revalidate in the background — switching tabs feels instant
     const cached = viewCacheGet();
     if (cached) {
-      S.articles = cached.items; S.nextBefore = cached.nextBefore; S.selectedIdx = -1;
+      S.articles = cached.items; S.nextBefore = cached.nextBefore;
+      S.nextBeforeId = cached.nextBeforeId || 0; S.selectedIdx = -1;
       renderList();
       loadArticles(true, /*silent=*/true);
     } else {
@@ -358,7 +360,7 @@ function switchView() {
 }
 
 // ── per-view list cache (instant tab switches) ──────
-const _viewCache = new Map();       // viewKey -> {items, nextBefore, ts}
+const _viewCache = new Map();       // viewKey -> {items, nextBefore, nextBeforeId, ts}
 const VIEW_CACHE_TTL = 120000;      // 2 min freshness
 function viewKey() {
   const v = S.view;
@@ -368,8 +370,8 @@ function viewCacheGet() {
   const e = _viewCache.get(viewKey());
   return e && Date.now() - e.ts < VIEW_CACHE_TTL ? e : null;
 }
-function viewCachePut(items, nextBefore) {
-  _viewCache.set(viewKey(), { items: items.slice(0, 50), nextBefore, ts: Date.now() });
+function viewCachePut(items, nextBefore, nextBeforeId) {
+  _viewCache.set(viewKey(), { items: items.slice(0, 50), nextBefore, nextBeforeId, ts: Date.now() });
   if (_viewCache.size > 30) _viewCache.delete(_viewCache.keys().next().value);
 }
 function viewCacheClear() { _viewCache.clear(); }
@@ -718,7 +720,7 @@ function renderListSkeleton() {
 
 let loadSeq = 0;
 async function loadArticles(reset = false, silent = false) {
-  if (reset && !silent) { S.articles = []; S.nextBefore = 0; S.selectedIdx = -1; }
+  if (reset && !silent) { S.articles = []; S.nextBefore = 0; S.nextBeforeId = 0; S.selectedIdx = -1; }
   // a reset (view switch) always supersedes an in-flight load; pagination waits
   if (S.loadingMore && !reset) return;
   const seq = ++loadSeq;
@@ -731,12 +733,16 @@ async function loadArticles(reset = false, silent = false) {
     if (S.view.tag) p.set("tag", S.view.tag);
     if (S.view.monitor) p.set("monitor", S.view.monitor);
     if (S.view.q) p.set("q", S.view.q);
-    if (!reset && S.nextBefore) p.set("before", S.nextBefore);
+    if (!reset && S.nextBefore) {  // compound cursor — send both halves
+      p.set("before", S.nextBefore);
+      p.set("before_id", S.nextBeforeId);
+    }
     const data = await api(`/api/articles?${p}`);
     if (seq !== loadSeq) return;  // a newer view switch already started
     S.articles = reset ? data.items : S.articles.concat(data.items);
     S.nextBefore = data.next_before;
-    if (reset) viewCachePut(data.items, data.next_before);
+    S.nextBeforeId = data.next_before_id || 0;
+    if (reset) viewCachePut(data.items, data.next_before, data.next_before_id);
     renderList();
     if (S.titleTrans) translateVisibleTitles(data.items);
   } catch (err) {
@@ -1454,9 +1460,15 @@ $$(".seg-btn").forEach((b) => b.addEventListener("click", () => {
 }));
 
 $("#btn-readall").addEventListener("click", async () => {
-  const body = {};
-  if (S.view.category) body.category = S.view.category;
-  if (S.view.feedId) body.feed_id = S.view.feedId;
+  const v = S.view, body = {};
+  // send the FULL current filter so "mark all read" marks exactly what's shown,
+  // not the whole library (monitor/tag/starred/later views used to over-mark)
+  if (v.category) body.category = v.category;
+  if (v.feedId) body.feed_id = v.feedId;
+  if (v.filter && v.filter !== "all") body.filter = v.filter;
+  if (v.tag) body.tag = v.tag;
+  if (v.monitor) body.monitor = v.monitor;
+  if (v.q) body.q = v.q;
   // only mark what the user has had a chance to see (newest loaded item)
   body.before = S.articles[0]?.published || Math.floor(Date.now() / 1000);
   const data = await api("/api/read-all", { method: "POST", body });

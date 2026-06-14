@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import secrets
+import threading
 import time
 from collections import OrderedDict
 
@@ -13,6 +14,10 @@ _attempts: OrderedDict[str, list[float]] = OrderedDict()
 MAX_ATTEMPTS = 5
 WINDOW_SECONDS = 300
 MAX_TRACKED_IPS = 10000
+
+_ai_calls: OrderedDict[str, list[float]] = OrderedDict()
+AI_MAX_PER_MIN = 60                     # per-IP cap on token-burning AI endpoints
+_limit_lock = threading.Lock()          # sync Depends run in FastAPI's threadpool
 
 
 def _sign(payload: str) -> str:
@@ -48,18 +53,37 @@ def check_pin(pin: str) -> bool:
     return hmac.compare_digest(pin.encode(), config.PIN.encode())
 
 
-def rate_limit(request: Request) -> None:
-    ip = (request.headers.get("cf-connecting-ip")
-          or (request.client.host if request.client else "?"))
+def _client_ip(request: Request) -> str:
+    return (request.headers.get("cf-connecting-ip")
+            or (request.client.host if request.client else "?"))
+
+
+def _sliding_limit(store: "OrderedDict[str, list[float]]", ip: str,
+                   max_n: int, window: int, msg: str) -> None:
     now = time.time()
-    window = [t for t in _attempts.pop(ip, []) if now - t < WINDOW_SECONDS]
-    if len(window) >= MAX_ATTEMPTS:
-        _attempts[ip] = window
-        raise HTTPException(429, "too many attempts, try again later")
-    window.append(now)
-    _attempts[ip] = window
-    while len(_attempts) > MAX_TRACKED_IPS:  # evict oldest, never reset all
-        _attempts.popitem(last=False)
+    with _limit_lock:  # read-modify-write must be atomic across threadpool workers
+        hits = [t for t in store.pop(ip, []) if now - t < window]
+        if len(hits) >= max_n:
+            store[ip] = hits
+            raise HTTPException(429, msg)
+        hits.append(now)
+        store[ip] = hits
+        while len(store) > MAX_TRACKED_IPS:  # evict oldest, never reset all
+            store.popitem(last=False)
+
+
+def rate_limit(request: Request) -> None:
+    """Login attempts — strict brute-force defence."""
+    _sliding_limit(_attempts, _client_ip(request), MAX_ATTEMPTS, WINDOW_SECONDS,
+                   "too many attempts, try again later")
+
+
+def rate_limit_ai(request: Request) -> None:
+    """AI endpoints (FastAPI dependency): cap per-IP burst so a leaked or shared
+    session can't drain the daily token budget — the budget guard only refuses
+    AFTER tokens are spent."""
+    _sliding_limit(_ai_calls, _client_ip(request), AI_MAX_PER_MIN, 60,
+                   "请求过于频繁，请稍后再试")
 
 
 def require_session(request: Request) -> None:

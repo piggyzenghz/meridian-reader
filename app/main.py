@@ -86,6 +86,7 @@ async def logout(response: Response) -> dict[str, Any]:
 
 
 protected = Depends(auth.require_session)
+ai_limited = Depends(auth.rate_limit_ai)   # per-IP burst cap on token-burning endpoints
 
 
 def _public_feed(feed: dict[str, Any]) -> dict[str, Any]:
@@ -101,6 +102,13 @@ def _public_feed(feed: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- state
+
+# monitor unread counts are an N+1 of full-table LIKE scans; /api/state is polled
+# every ~120s and on every view switch, so cache them briefly (invalidated when
+# the monitor set changes). Counts may lag up to the TTL — fine for a badge.
+_mon_count_cache: dict[str, Any] = {"sig": None, "ts": 0.0, "data": []}
+_MON_COUNT_TTL = 60
+
 
 @app.get("/api/state", dependencies=[protected])
 async def state() -> dict[str, Any]:
@@ -128,14 +136,22 @@ async def state() -> dict[str, Any]:
             """SELECT at.tag AS tag, COUNT(*) AS n
                FROM article_tags at JOIN articles a ON a.id=at.article_id
                WHERE a.is_read=0 GROUP BY at.tag""").fetchall()}
-        monitors = []
-        for row in conn.execute(
-                "SELECT id, query FROM monitors ORDER BY created_at").fetchall():
-            clause, mparams = _monitor_clause(row["query"])
-            unread = conn.execute(
-                f"SELECT COUNT(*) AS n FROM articles a WHERE a.is_read=0 AND ({clause})",
-                mparams).fetchone()["n"]
-            monitors.append({"id": row["id"], "query": row["query"], "unread": unread})
+        mon_rows = conn.execute(
+            "SELECT id, query FROM monitors ORDER BY created_at").fetchall()
+        sig = tuple((r["id"], r["query"]) for r in mon_rows)
+        now_ts = time.time()
+        if (_mon_count_cache["sig"] == sig
+                and now_ts - _mon_count_cache["ts"] < _MON_COUNT_TTL):
+            monitors = list(_mon_count_cache["data"])   # copy — don't expose the cache
+        else:
+            monitors = []
+            for row in mon_rows:
+                clause, mparams = _monitor_clause(row["query"])
+                unread = conn.execute(
+                    f"SELECT COUNT(*) AS n FROM articles a WHERE a.is_read=0 AND ({clause})",
+                    mparams).fetchone()["n"]
+                monitors.append({"id": row["id"], "query": row["query"], "unread": unread})
+            _mon_count_cache.update(sig=sig, ts=now_ts, data=monitors)
         mutes = [dict(r) for r in conn.execute(
             "SELECT id, pattern FROM mutes ORDER BY created_at").fetchall()]
         last_refresh = int(db.get_meta(conn, "last_refresh", "0"))
@@ -185,13 +201,13 @@ def _monitor_clause(query: str) -> tuple[str, list[str]]:
     return " AND ".join(clauses), params
 
 
-@app.get("/api/articles", dependencies=[protected])
-async def list_articles(
-    category: str = "", feed_id: int = 0, filter: str = "all",
-    q: str = "", tag: str = "", monitor: str = "", before: int = 0, limit: int = 50,
-) -> dict[str, Any]:
-    limit = max(1, min(limit, 100))
-    where, params = ["1=1"], []
+def _article_filters(category: str, feed_id: int, filter: str, tag: str,
+                     monitor: str, q: str) -> tuple[list[str], list[Any]]:
+    """Shared WHERE conditions for the article list and read-all, so 'mark all
+    read' marks EXACTLY the set the list shows. Cursor + mutes are added by the
+    callers. Uses a./f. aliases (callers JOIN feeds f)."""
+    where: list[str] = []
+    params: list[Any] = []
     if category and category in config.CATEGORIES:
         where.append("f.category=?")
         params.append(category)
@@ -211,12 +227,27 @@ async def list_articles(
         clause, mparams = _monitor_clause(monitor)
         where.append(f"({clause})")
         params += mparams
-    if q:
-        where.append("(a.title LIKE ? OR a.title_zh LIKE ? OR a.summary LIKE ?)")
-        like = f"%{q[:100]}%"
+    if q:  # escape LIKE metachars so a literal % / _ in the query matches literally
+        where.append("(a.title LIKE ? ESCAPE '\\' OR a.title_zh LIKE ? ESCAPE '\\'"
+                     " OR a.summary LIKE ? ESCAPE '\\')")
+        like = f"%{_like_escape(q[:100])}%"
         params += [like, like, like]
-    if before:
-        where.append("a.published < ?")
+    return where, params
+
+
+@app.get("/api/articles", dependencies=[protected])
+async def list_articles(
+    category: str = "", feed_id: int = 0, filter: str = "all",
+    q: str = "", tag: str = "", monitor: str = "", before: int = 0,
+    before_id: int = 0, limit: int = 50,
+) -> dict[str, Any]:
+    limit = max(1, min(limit, 100))
+    where, params = _article_filters(category, feed_id, filter, tag, monitor, q)
+    if before and before_id:  # compound cursor (published, id) — keeps rows that
+        where.append("(a.published < ? OR (a.published = ? AND a.id < ?))")
+        params += [before, before, before_id]  # share the boundary second
+    elif before:  # old client / no id → inclusive on ts so the boundary row isn't dropped
+        where.append("a.published <= ?")
         params.append(before)
     apply_mutes = not q and not monitor  # explicit search/monitor overrides mutes
     with db.get_db() as conn:
@@ -231,8 +262,8 @@ async def list_articles(
                        a.read_later, a.progress, a.word_count,
                        a.body_zh, f.title AS feed_title, f.category
                 FROM articles a JOIN feeds f ON f.id=a.feed_id
-                WHERE {' AND '.join(where)}
-                ORDER BY a.published DESC LIMIT ?""",
+                WHERE {' AND '.join(where) if where else '1=1'}
+                ORDER BY a.published DESC, a.id DESC LIMIT ?""",
             (*params, limit + 1),
         ).fetchall()
     has_more = len(rows) > limit
@@ -250,8 +281,10 @@ async def list_articles(
                 by_id.setdefault(r["article_id"], []).append(r["tag"])
         for it in items:
             it["tags"] = by_id.get(it["id"], [])
-    next_before = items[-1]["published"] if items and has_more else 0
-    return {"items": items, "next_before": next_before}
+    last = items[-1] if items and has_more else None
+    return {"items": items,
+            "next_before": last["published"] if last else 0,
+            "next_before_id": last["id"] if last else 0}
 
 
 def _get_article(article_id: int) -> dict[str, Any]:
@@ -523,7 +556,7 @@ async def get_digest(day: str = "") -> Any:
     return cached
 
 
-@app.post("/api/digest", dependencies=[protected])
+@app.post("/api/digest", dependencies=[protected, ai_limited])
 async def make_digest_now(force: int = 0) -> Any:  # force is a query param (?force=1)
     try:
         return await digest.generate(digest.today_key(), force=bool(force))
@@ -551,24 +584,35 @@ async def discover_endpoint(body: DiscoverIn) -> dict[str, Any]:
 class ReadAllIn(BaseModel):
     category: str = ""
     feed_id: int = 0
+    filter: str = "all"
+    tag: str = ""
+    monitor: str = ""
+    q: str = ""
     before: int = 0
 
 
 @app.post("/api/read-all", dependencies=[protected])
 async def read_all(body: ReadAllIn) -> dict[str, Any]:
-    where, params = ["is_read=0"], []
-    if body.category and body.category in config.CATEGORIES:
-        where.append("feed_id IN (SELECT id FROM feeds WHERE category=?)")
-        params.append(body.category)
-    if body.feed_id:
-        where.append("feed_id=?")
-        params.append(body.feed_id)
+    # reuse the list's filter builder so "mark all read" marks EXACTLY what the
+    # current view shows — previously it ignored tag/monitor/starred/later and
+    # silently marked the whole library when those views were active.
+    where, params = _article_filters(body.category, body.feed_id, body.filter,
+                                     body.tag, body.monitor, body.q)
+    where.append("a.is_read=0")
     if body.before:
-        where.append("published <= ?")
+        where.append("a.published <= ?")
         params.append(body.before)
+    apply_mutes = not body.q and not body.monitor
     with db.get_db() as conn:
+        if apply_mutes:
+            for r in conn.execute("SELECT pattern FROM mutes LIMIT 100").fetchall():
+                pat = f"%{_like_escape(r['pattern'])}%"
+                where.append("a.title NOT LIKE ? ESCAPE '\\' AND a.summary NOT LIKE ? ESCAPE '\\'")
+                params += [pat, pat]
         cur = conn.execute(
-            f"UPDATE articles SET is_read=1 WHERE {' AND '.join(where)}", params)
+            "UPDATE articles SET is_read=1 WHERE id IN ("
+            f"SELECT a.id FROM articles a JOIN feeds f ON f.id=a.feed_id "
+            f"WHERE {' AND '.join(where)})", params)
     return {"marked": cur.rowcount}
 
 
@@ -581,7 +625,7 @@ def _translate_error(exc: Exception) -> JSONResponse:
     return JSONResponse({"error": "翻译服务暂不可用，请稍后再试"}, status_code=502)
 
 
-@app.post("/api/articles/{article_id}/translate", dependencies=[protected])
+@app.post("/api/articles/{article_id}/translate", dependencies=[protected, ai_limited])
 async def translate_article(article_id: int) -> Any:
     article = _get_article(article_id)
     content = _content_of(article)
@@ -610,7 +654,7 @@ async def translate_article(article_id: int) -> Any:
     return {"blocks": blocks, "cached": False}
 
 
-@app.post("/api/articles/{article_id}/summarize", dependencies=[protected])
+@app.post("/api/articles/{article_id}/summarize", dependencies=[protected, ai_limited])
 async def summarize_article(article_id: int) -> Any:
     article = _get_article(article_id)
     if article["summary_zh"]:
@@ -633,7 +677,7 @@ class TitlesIn(BaseModel):
     ids: list[int] = Field(max_length=60)
 
 
-@app.post("/api/translate-titles", dependencies=[protected])
+@app.post("/api/translate-titles", dependencies=[protected, ai_limited])
 async def translate_titles(body: TitlesIn) -> Any:
     if not body.ids:
         return {"titles": {}}
@@ -670,7 +714,7 @@ class PhraseIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
-@app.post("/api/translate-phrase", dependencies=[protected])
+@app.post("/api/translate-phrase", dependencies=[protected, ai_limited])
 async def translate_phrase(body: PhraseIn) -> Any:
     """Translate a selected word / phrase / sentence (selection popover)."""
     try:
@@ -1028,7 +1072,7 @@ async def cluster_members(cluster_id: int) -> dict[str, Any]:
     return {"members": rows, "count": len(rows)}
 
 
-@app.get("/api/cluster/{cluster_id}/summary", dependencies=[protected])
+@app.get("/api/cluster/{cluster_id}/summary", dependencies=[protected, ai_limited])
 async def cluster_summary(cluster_id: int) -> Any:
     """gpt-5.5 event synthesis (overview / progress / takeaway), cached by event
     title + member count so it only regenerates when the event develops."""
@@ -1070,7 +1114,7 @@ async def cluster_summary(cluster_id: int) -> Any:
     return {"summary": s, "cached": False}
 
 
-@app.get("/api/cluster/{cluster_id}/analysis", dependencies=[protected])
+@app.get("/api/cluster/{cluster_id}/analysis", dependencies=[protected, ai_limited])
 async def cluster_analysis(cluster_id: int) -> Any:
     """gpt-5.5 deep event analysis. Cached under a STABLE event identity (the
     Chinese title, which survives reclustering). Only regenerated on a BIG change
