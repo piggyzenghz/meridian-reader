@@ -192,6 +192,35 @@ async def summarize(title: str, text: str, engine: str = "deepseek") -> dict[str
             "points": [str(p) for p in parsed.get("points", [])][:5]}
 
 
+async def summarize_cluster(top_title: str, members: list[dict[str, Any]],
+                            engine: str = "gpt55") -> dict[str, Any]:
+    """Event synthesis across a cluster's multi-source reports — overview /
+    progress / takeaway, in Chinese, neutral across outlets."""
+    if not members:
+        raise TranslateError("cluster has no members")
+    lines = [f"[{m['feed_title']}] {m['title']} — {(m.get('summary') or '')[:120]}"
+             for m in members[:30]]
+    content = await _chat(
+        [
+            {"role": "system", "content": (
+                "你是新闻主编。下面是同一事件被多家媒体报道的标题与摘要。综合写一份"
+                "中文事件简报,只输出 JSON："
+                '{"overview":"事件概述(2-3句,讲清是什么事、关键事实)",'
+                '"progress":["最新进展要点1","要点2","要点3"],'
+                '"takeaway":"一句话总结这件事的意义或影响"}。'
+                "客观中立,综合各家信息,不偏向任何一家媒体立场,不编造未提及的事实。"
+            )},
+            {"role": "user", "content": f"事件：{top_title}\n\n各家报道：\n" + "\n".join(lines)},
+        ],
+        max_tokens=900, json_mode=True, engine=engine)
+    parsed = json.loads(content)
+    if not isinstance(parsed, dict):
+        raise TranslateError("unexpected cluster summary shape")
+    return {"overview": str(parsed.get("overview", "")),
+            "progress": [str(p) for p in parsed.get("progress", [])][:5],
+            "takeaway": str(parsed.get("takeaway", ""))}
+
+
 async def translate_phrase(text: str, engine: str = "deepseek") -> dict[str, Any]:
     """Translate a selected word / phrase / sentence. For short selections also
     return a one-line gloss (part of speech / nuance); for long ones just the

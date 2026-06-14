@@ -437,45 +437,131 @@ async function renderDigestView(forceGen = false) {
 }
 window.__retryDigest = () => renderDigestView(true);
 
-/* ── story clusters (events) ─────────────────────── */
+/* ── story clusters (events): 3-column event desk ── */
+const EV = { clusterId: null, articleId: null, blocks: null, article: null };
+
+// reader-style body render (reused for the right column; mirrors renderReader)
+function clusterBodyHtml(a, blocks) {
+  if (blocks?.length) {
+    let h = `<div class="translate-note">中英对照 · DeepSeek 译</div><div class="prose-blocks">`;
+    let i = 0;
+    for (const blk of blocks) {
+      h += `<div class="blk" style="--i:${i++}">`;
+      if (blk.t === "img") h += `<div class="blk-img"><img src="${esc(blk.x)}" alt="" referrerpolicy="no-referrer"></div>`;
+      else if (blk.t === "pre") h += `<div class="blk-pre">${esc(blk.x)}</div>`;
+      else { h += `<div class="blk-en ${blk.t === "h" ? "is-h" : ""}">${esc(blk.x)}</div>`; if (blk.z) h += `<div class="blk-zh ${blk.t === "h" ? "is-h" : ""}">${esc(blk.z)}</div>`; }
+      h += "</div>";
+    }
+    return h + "</div>";
+  }
+  if (a.content) return `<div class="prose">${a.content}</div>`;
+  return `<div class="fulltext-hint"><span>该源只提供摘要：${esc(a.summary || "无内容")}</span></div>`;
+}
+
 async function renderClustersView() {
   $("#view-title").textContent = "Events";
   $("#view-count").textContent = "";
-  const wrap = $("#list");
-  wrap.innerHTML = `<div class="clusters-wrap"><div class="cluster-card"><div class="sk-line" style="width:60%;height:16px"></div></div></div>`;
+  EV.clusterId = null; EV.articleId = null; EV.blocks = null; EV.article = null;
+  $("#list").innerHTML = `<div class="ev3">
+    <div class="ev-col ev-list" id="ev-list"><div class="sk-line" style="margin:16px;width:72%"></div></div>
+    <div class="ev-col ev-mid" id="ev-mid"><div class="ev-ph">← 选一个事件，看多家媒体怎么报道同一件事</div></div>
+    <div class="ev-col ev-read" id="ev-read"><div class="ev-ph">选一篇报道，正文显示在这里</div></div>
+  </div>`;
   try {
     const data = await api("/api/clusters");
-    if (!data.clusters?.length) {
-      wrap.innerHTML = `<div class="clusters-wrap"><div class="clusters-empty">还没有聚合的事件<br><span>同一事件被 ≥2 家媒体报道时会自动归并到这里</span></div></div>`;
-      return;
+    const list = $("#ev-list");
+    if (!data.clusters?.length) { list.innerHTML = `<div class="ev-ph">还没有聚合的事件<br><span style="font-size:11px">同一事件被 ≥2 家媒体报道时自动归并</span></div>`; return; }
+    list.innerHTML = data.clusters.map((c) => `
+      <button class="ev-item" data-cluster="${c.id}" data-title="${esc(c.top_title)}">
+        <span class="ev-item-badge">◈ ${c.source_count} 家 · ${c.member_count} 篇</span>
+        <span class="ev-item-title">${esc(c.top_title)}</span></button>`).join("");
+  } catch { $("#ev-list").innerHTML = `<div class="ev-ph">加载失败</div>`; }
+}
+
+function evSelectCluster(cid, title) {
+  EV.clusterId = cid; EV.articleId = null;
+  $(".ev3")?.classList.remove("has-article");  // back to list on narrow screens
+  $$(".ev-item").forEach((b) => b.classList.toggle("active", b.dataset.cluster === cid));
+  $("#ev-mid").innerHTML = `<div class="ev-event-title">${esc(title)}</div>
+    <div class="ev-summary" id="ev-summary"><div class="ev-sum-loading"><i class="spin-dot"></i> gpt-5.5 事件综述生成中…</div></div>
+    <div class="ev-reports-head">各家报道</div>
+    <div class="ev-reports" id="ev-reports"><div class="sk-line" style="width:60%;margin:8px 0"></div></div>`;
+  $("#ev-read").innerHTML = `<div class="ev-ph">选一篇报道，正文显示在这里</div>`;
+  api(`/api/cluster/${cid}`).then((d) => {
+    if (EV.clusterId !== cid) return;
+    $("#ev-reports").innerHTML = d.members.map((m) => `
+      <button class="ev-report" data-id="${m.id}" style="--cat:${CAT_VAR[m.category] || "var(--accent)"}">
+        ${srcBadge(m.feed_title, m.feed_id)}<span class="ev-rep-src">${esc(m.feed_title)}</span>
+        <span class="ev-rep-title">${esc(m.title_zh || m.title)}</span></button>`).join("");
+  }).catch(() => { if (EV.clusterId === cid) $("#ev-reports").innerHTML = `<div class="ev-ph">加载失败</div>`; });
+  api(`/api/cluster/${cid}/summary`).then((d) => {
+    if (EV.clusterId !== cid) return;
+    const s = d.summary || {};
+    $("#ev-summary").innerHTML =
+      `${s.overview ? `<div class="ev-sum-over">${esc(s.overview)}</div>` : ""}
+       ${s.progress?.length ? `<div class="ev-sum-prog"><span class="ev-sum-tag">进展</span><ul>${s.progress.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></div>` : ""}
+       ${s.takeaway ? `<div class="ev-sum-take">◆ ${esc(s.takeaway)}</div>` : ""}`;
+  }).catch(() => { if (EV.clusterId === cid) $("#ev-summary").innerHTML = `<div class="ev-sum-err">综述暂不可用</div>`; });
+}
+
+async function evSelectArticle(id) {
+  EV.articleId = id; EV.blocks = null;
+  $(".ev3")?.classList.add("has-article");  // narrow screens: right column takes over
+  $$(".ev-report").forEach((b) => b.classList.toggle("active", b.dataset.id === id));
+  $("#ev-read").innerHTML = `<div class="ev-reading"><div class="sk-line" style="width:50%;margin:24px auto"></div></div>`;
+  try {
+    const a = await api(`/api/articles/${id}`);
+    if (EV.articleId !== id) return;
+    EV.article = a; EV.blocks = a.body_zh?.length ? a.body_zh : null;
+    evRenderArticle();
+    if (a.extracting) evPollArticle(id);
+  } catch { if (EV.articleId === id) $("#ev-read").innerHTML = `<div class="ev-ph">加载失败</div>`; }
+}
+
+function evRenderArticle() {
+  const a = EV.article; if (!a) return;
+  const titleBlock = a.title_zh
+    ? `<h1 class="reader-title">${esc(a.title_zh)}</h1><div class="reader-title-en">${esc(a.title)}</div>`
+    : `<h1 class="reader-title">${esc(a.title)}</h1>`;
+  $("#ev-read").innerHTML = `
+    <div class="ev-read-bar">
+      <span class="ev-read-meta"><b style="--cat:${CAT_VAR[a.category]}">${esc(a.feed_title)}</b> · ${fmtTime(a.published)}</span>
+      <span class="ev-read-acts">
+        <button class="pill ghost ev-btn-translate" data-id="${a.id}">${EV.blocks ? "原文" : "中英对照"}</button>
+        <a class="pill ghost" href="${/^https?:\/\//i.test(a.link) ? esc(a.link) : "#"}" target="_blank" rel="noopener">原文 ↗</a></span>
+    </div>
+    <div class="reader-inner ev-read-inner ${EV.blocks ? "bilingual" : ""}">${titleBlock}${clusterBodyHtml(a, EV.blocks)}</div>`;
+  $$("#ev-read img").forEach((im) => { im.loading = "eager"; });
+}
+
+async function evPollArticle(id) {
+  for (let i = 0; i < 20 && EV.articleId === id; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    if (EV.articleId !== id) return;
+    const a = await api(`/api/articles/${id}`).catch(() => null);
+    if (a && (a.has_fulltext || !a.extracting)) {
+      EV.article = a; if (a.body_zh?.length) EV.blocks = a.body_zh; evRenderArticle(); return;
     }
-    wrap.innerHTML = `<div class="clusters-wrap">` + data.clusters.map((c) => `
-      <article class="cluster-card" data-cluster="${c.id}">
-        <div class="cluster-meta"><span class="cluster-badge">◈ ${c.source_count} 家媒体 · ${c.member_count} 篇报道</span><span class="cluster-time">${fmtTime(c.last_seen)}</span></div>
-        <h3 class="cluster-title">${esc(c.top_title)}</h3>
-        <div class="cluster-members"></div>
-      </article>`).join("") + `</div>`;
-  } catch (e) {
-    wrap.innerHTML = `<div class="clusters-wrap"><div class="clusters-empty">加载失败</div></div>`;
   }
 }
-$("#list").addEventListener("click", async (e) => {
-  if (S.view.mode !== "clusters") return;
-  const card = e.target.closest(".cluster-card");
-  if (!card) return;
-  const cid = card.dataset.cluster;
-  const mem = card.querySelector(".cluster-members");
-  if (mem.dataset.loaded) { card.classList.toggle("open"); return; }
-  card.classList.add("open");
-  mem.innerHTML = `<div class="sk-line" style="width:40%;height:12px;margin:6px 0"></div>`;
+
+async function evToggleTranslate(id) {
+  if (EV.blocks) { EV.blocks = null; evRenderArticle(); return; }
+  const btn = $(".ev-btn-translate"); if (btn) { btn.classList.add("busy"); btn.textContent = "翻译中…"; }
   try {
-    const data = await api(`/api/cluster/${cid}`);
-    mem.innerHTML = data.members.map((m) => `
-      <a class="cluster-member" href="${esc(m.link)}" target="_blank" rel="noopener" style="--cat:${CAT_VAR[m.category] || "var(--accent)"}">
-        ${srcBadge(m.feed_title, m.feed_id)}<span class="cm-src">${esc(m.feed_title)}</span><span class="cm-title">${esc(m.title_zh || m.title)}</span>
-      </a>`).join("");
-    mem.dataset.loaded = "1";
-  } catch { mem.innerHTML = `<span class="cm-err">加载失败</span>`; }
+    const data = await api(`/api/articles/${id}/translate`, { method: "POST" });
+    if (EV.articleId === id) { EV.blocks = data.blocks; evRenderArticle(); }
+  } catch (e) { toast(`翻译失败：${esc(e.message)}`); btn?.classList.remove("busy"); if (btn) btn.textContent = "中英对照"; }
+}
+
+$("#list").addEventListener("click", (e) => {
+  if (S.view.mode !== "clusters") return;
+  const item = e.target.closest(".ev-item");
+  if (item) return evSelectCluster(item.dataset.cluster, item.dataset.title);
+  const rep = e.target.closest(".ev-report");
+  if (rep) return evSelectArticle(rep.dataset.id);
+  const tb = e.target.closest(".ev-btn-translate");
+  if (tb) return evToggleTranslate(tb.dataset.id);
 });
 
 async function loadMarkets() {
