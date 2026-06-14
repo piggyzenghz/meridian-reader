@@ -99,7 +99,9 @@ CREATE TABLE IF NOT EXISTS clusters (
     source_count INTEGER NOT NULL DEFAULT 0,
     first_seen INTEGER NOT NULL DEFAULT 0,
     last_seen INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL DEFAULT 0
+    created_at INTEGER NOT NULL DEFAULT 0,
+    title_zh TEXT NOT NULL DEFAULT '',
+    heat INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_clusters_lastseen ON clusters(last_seen DESC);
 """
@@ -141,6 +143,9 @@ COLUMN_MIGRATIONS = [
     "ALTER TABLE articles ADD COLUMN cluster_id INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE articles ADD COLUMN embedding BLOB",
     "CREATE INDEX IF NOT EXISTS idx_articles_cluster ON articles(cluster_id)",
+    # gpt-5.5 event scoring: Chinese event title (左列中英对照) + heat (排序)
+    "ALTER TABLE clusters ADD COLUMN title_zh TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE clusters ADD COLUMN heat INTEGER NOT NULL DEFAULT 0",
 ]
 
 

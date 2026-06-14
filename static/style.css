@@ -668,7 +668,9 @@ svg { display: block; }
   object-fit: cover; background: var(--surface-2);
 }
 /* ── events: 3-column event desk ── */
-.ev3 { display: grid; grid-template-columns: 300px 372px 1fr; height: 100%; min-height: 0; animation: fade-up .4s var(--ease-spring); }
+.list-wrap:has(.ev3) { overflow: hidden; }   /* events: each column scrolls on its own, not the page */
+#list:has(.ev3) { height: 100%; }
+.ev3 { display: grid; grid-template-columns: 25% 25% 50%; height: 100%; min-height: 0; animation: fade-up .4s var(--ease-spring); }
 .ev-col { height: 100%; overflow-y: auto; min-height: 0; }
 .ev-list { border-right: 1px solid var(--line); padding: 8px 0; }
 .ev-mid { border-right: 1px solid var(--line); padding: 18px 20px 60px; }
@@ -677,8 +679,10 @@ svg { display: block; }
 .ev-item { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--line); cursor: pointer; transition: background .15s; }
 .ev-item:hover { background: var(--surface); }
 .ev-item.active { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--c-x); }
-.ev-item-badge { font-size: 10.5px; font-weight: 650; color: var(--c-x); }
-.ev-item-title { font-size: 13px; line-height: 1.45; color: var(--text); }
+.ev-item-badge { font-size: 10.5px; font-weight: 650; color: var(--c-x); display: flex; align-items: center; gap: 7px; }
+.ev-item-heat { color: #E8833A; font-weight: 800; font-variant-numeric: tabular-nums; }
+.ev-item-title { font-size: 13.5px; line-height: 1.45; color: var(--text); font-weight: 550; }
+.ev-item-title-en { font-size: 11px; line-height: 1.4; color: var(--text-3); }
 .ev-event-title { font-family: var(--font-text); font-size: 17px; font-weight: 650; line-height: 1.4; margin-bottom: 14px; text-wrap: pretty; }
 .ev-summary { background: var(--surface); border: 1px solid var(--line); border-radius: 13px; padding: 14px 16px; margin-bottom: 20px; }
 .ev-sum-loading, .ev-sum-err { color: var(--text-3); font-size: 12.5px; display: flex; align-items: center; gap: 8px; }

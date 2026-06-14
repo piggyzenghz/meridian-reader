@@ -472,9 +472,10 @@ async function renderClustersView() {
     const list = $("#ev-list");
     if (!data.clusters?.length) { list.innerHTML = `<div class="ev-ph">还没有聚合的事件<br><span style="font-size:11px">同一事件被 ≥2 家媒体报道时自动归并</span></div>`; return; }
     list.innerHTML = data.clusters.map((c) => `
-      <button class="ev-item" data-cluster="${c.id}" data-title="${esc(c.top_title)}">
-        <span class="ev-item-badge">◈ ${c.source_count} 家 · ${c.member_count} 篇</span>
-        <span class="ev-item-title">${esc(c.top_title)}</span></button>`).join("");
+      <button class="ev-item" data-cluster="${c.id}" data-title="${esc(c.title_zh || c.top_title)}">
+        <span class="ev-item-badge">${c.heat ? `<span class="ev-item-heat">🔥 ${c.heat}</span>` : ""}<span>◈ ${c.source_count} 家 · ${c.member_count} 篇</span></span>
+        <span class="ev-item-title">${esc(c.title_zh || c.top_title)}</span>
+        ${c.title_zh ? `<span class="ev-item-title-en">${esc(c.top_title)}</span>` : ""}</button>`).join("");
   } catch { $("#ev-list").innerHTML = `<div class="ev-ph">加载失败</div>`; }
 }
 

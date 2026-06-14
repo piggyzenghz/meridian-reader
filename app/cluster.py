@@ -7,6 +7,9 @@ is the key quality lever: a cluster must span >=2 distinct feeds to surface as a
 "event" — same-source template runs (e.g. Yahoo "Is X A Good Stock") never do.
 """
 import asyncio
+import hashlib
+import json
+import logging
 import math
 import re
 import struct
@@ -16,6 +19,8 @@ from collections import Counter
 import httpx
 
 from . import config, db
+
+log = logging.getLogger(__name__)
 
 OLLAMA = "http://localhost:11434/api/embeddings"
 EMB_MODEL = "bge-m3"
@@ -151,10 +156,65 @@ def recluster() -> int:
     return surfaced
 
 
+def _score_key(top_title: str) -> str:
+    # keyed on title only — member_count in the key would re-score an event on
+    # every +1 article, burning gpt-5.5 quota for no signal change
+    return "cheat:" + hashlib.sha1(top_title.encode()).hexdigest()[:16]
+
+
+async def score_clusters() -> int:
+    """gpt-5.5: give each surfaced cluster a Chinese title + heat score (for the
+    left column's 中英对照 and heat-based sort). Cached by top_title so unchanged
+    events aren't re-scored. Returns newly-scored count. Best-effort — clusters
+    still work (heat=0 → falls back to source_count sort) if gpt-5.5 is down."""
+    from . import translate
+    with db.get_db() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, top_title, source_count, member_count FROM clusters "
+            "ORDER BY source_count DESC, member_count DESC LIMIT 80")]
+    if not rows:
+        return 0
+    cached, need = {}, []
+    with db.get_db() as conn:
+        for r in rows:
+            hit = db.get_meta(conn, _score_key(r["top_title"]))
+            try:
+                cached[r["id"]] = json.loads(hit) if hit else None
+            except json.JSONDecodeError:
+                cached[r["id"]] = None
+            if cached[r["id"]] is None:
+                need.append(r)
+    fresh = {}
+    if need:
+        scored = await translate.score_clusters_ai(need)
+        by_i = {s["i"]: s for s in scored}
+        for idx, r in enumerate(need):
+            s = by_i.get(idx)
+            if s:
+                fresh[r["id"]] = {"title_zh": s["title_zh"], "heat": s["heat"]}
+    with db.get_db() as conn:   # single write block: cache fresh + apply all scores
+        for r in need:
+            if r["id"] in fresh:
+                db.set_meta(conn, _score_key(r["top_title"]),
+                            json.dumps(fresh[r["id"]], ensure_ascii=False))
+        for r in rows:
+            s = cached.get(r["id"]) or fresh.get(r["id"])
+            if s:
+                conn.execute("UPDATE clusters SET title_zh=?, heat=? WHERE id=?",
+                             (s["title_zh"], s["heat"], r["id"]))
+    return len(fresh)
+
+
 async def run_once() -> int:
-    """Embed new articles then rebuild clusters. Called from the refresh loop."""
+    """Embed new articles, rebuild clusters, then gpt-5.5 score them. Called from
+    the refresh loop."""
     if _lock.locked():
         return 0
     async with _lock:
         await embed_recent()
-        return await asyncio.to_thread(recluster)
+        n = await asyncio.to_thread(recluster)
+        try:
+            await score_clusters()
+        except Exception:
+            log.warning("score_clusters best-effort failed", exc_info=True)
+        return n

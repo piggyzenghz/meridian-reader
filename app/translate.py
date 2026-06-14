@@ -221,6 +221,53 @@ async def summarize_cluster(top_title: str, members: list[dict[str, Any]],
             "takeaway": str(parsed.get("takeaway", ""))}
 
 
+async def score_clusters_ai(events: list[dict[str, Any]],
+                            engine: str = "gpt55") -> list[dict[str, Any]]:
+    """Batch-score event clusters: a concise Chinese title + a heat score
+    (0-100, blending source breadth, report volume, importance). Chunked so a
+    long event list never overflows the output token budget. Returns
+    [{i, title_zh, heat}, ...] indexed by the input order."""
+    if not events:
+        return []
+    sys_prompt = (
+        "你是新闻主编。下面是今日各个新闻事件(每个已由多家媒体报道聚合而成)。"
+        "为每个事件做两件事：① 起一个简洁中文标题(≤20字,概括事件核心,客观中立、"
+        "不带媒体立场) ② 打一个热度分(0-100 整数,综合报道媒体数量、报道篇数、"
+        "事件重要性与影响范围)。"
+        '只输出 JSON：{"events":[{"i":序号整数,"title_zh":"中文标题","heat":热度分整数}]}。'
+        "不编造未提及的信息。"
+    )
+    out: list[dict[str, Any]] = []
+    batch = 40
+    for start in range(0, len(events), batch):
+        chunk = events[start:start + batch]
+        lines = [f"{j}. [{e['source_count']}源/{e['member_count']}篇] {e['top_title']}"
+                 for j, e in enumerate(chunk)]
+        content = await _chat(   # budget/network errors propagate to the caller
+            [{"role": "system", "content": sys_prompt},
+             {"role": "user", "content": "事件列表：\n" + "\n".join(lines)}],
+            max_tokens=2800, json_mode=True, engine=engine)
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            continue   # truncated/malformed: skip only this chunk, keep the rest
+        if not isinstance(parsed, dict):
+            continue
+        for it in (parsed.get("events") or []):
+            if not isinstance(it, dict):
+                continue
+            try:
+                local_i = int(it.get("i"))
+                heat = max(0, min(100, int(it.get("heat", 0))))
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= local_i < len(chunk):   # reject hallucinated index
+                continue
+            out.append({"i": local_i + start,   # chunk-local -> global
+                        "title_zh": str(it.get("title_zh", ""))[:60], "heat": heat})
+    return out
+
+
 async def translate_phrase(text: str, engine: str = "deepseek") -> dict[str, Any]:
     """Translate a selected word / phrase / sentence. For short selections also
     return a one-line gloss (part of speech / nuance); for long ones just the

@@ -1007,8 +1007,9 @@ async def list_clusters() -> dict[str, Any]:
     """Surfaced event clusters (same event across >=2 sources), newest first."""
     with db.get_db() as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT id, top_title, member_count, source_count, first_seen, last_seen "
-            "FROM clusters ORDER BY source_count DESC, last_seen DESC LIMIT 60")]
+            "SELECT id, top_title, title_zh, heat, member_count, source_count, "
+            "first_seen, last_seen FROM clusters "
+            "ORDER BY heat DESC, source_count DESC, last_seen DESC LIMIT 60")]
     return {"clusters": rows}
 
 
