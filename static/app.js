@@ -48,8 +48,14 @@ function hostOf(url) {
 /* Real favicon for normal sources; x.com / twitter feeds (all one X logo) keep
    the distinguishing letter badge. A favicon load failure falls back to the
    letter badge — see the central image-error listener. */
+let _feedMapSrc = null, _feedMap = new Map();
+function feedById(id) {   // O(1) lookup; rebuilds only when the feeds array changes
+  const feeds = S.state?.feeds;
+  if (feeds !== _feedMapSrc) { _feedMap = new Map((feeds || []).map((f) => [f.id, f])); _feedMapSrc = feeds; }
+  return _feedMap.get(id) || null;
+}
 function srcBadge(title, feedId) {
-  const feed = feedId ? (S.state?.feeds || []).find((f) => f.id === feedId) : null;
+  const feed = feedId ? feedById(feedId) : null;
   const host = feed ? hostOf(feed.site_url) : "";
   const isX = /(^|\.)(x|twitter)\.com$/.test(host);
   if (feed && host && !isX) {

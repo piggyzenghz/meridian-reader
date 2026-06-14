@@ -1021,7 +1021,8 @@ mark.tts-word { background: color-mix(in srgb, var(--accent) 32%, transparent); 
   .topbar-actions { gap: 1px; }
   .topbar-actions .icon-btn { width: 38px; height: 38px; }  /* ≥44px tap incl. padding */
   .reader-bar { padding: 10px 12px; gap: 6px; }
-  .reader-bar-actions { gap: 1px; }
+  .reader-bar-actions { gap: 3px; }                          /* not 1px — too tight to tap (a11y) */
+  .reader-bar-actions .icon-btn { width: 34px; height: 34px; }  /* ≥34px touch target */
   .reader-nav { display: none; }              /* use j/k-equivalent swipe instead */
   .pill span { display: none; }               /* icon-only translate pill on phone */
   .pill { padding: 9px 11px; }
