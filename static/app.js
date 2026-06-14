@@ -485,6 +485,8 @@ function evSelectCluster(cid, title) {
   $$(".ev-item").forEach((b) => b.classList.toggle("active", b.dataset.cluster === cid));
   $("#ev-mid").innerHTML = `<div class="ev-event-title">${esc(title)}</div>
     <div class="ev-summary" id="ev-summary"><div class="ev-sum-loading"><i class="spin-dot"></i> gpt-5.5 事件综述生成中…</div></div>
+    <button class="ev-analyze-btn" data-cluster="${cid}" data-title="${esc(title)}">
+      <span class="ev-az-ic">🧠</span><span class="ev-az-tx"><b>AI 聚合分析</b><i>右侧展开完整事件报告 · 全景/时间线/各方观点/走势</i></span><span class="ev-az-arrow">→</span></button>
     <div class="ev-reports-head">各家报道</div>
     <div class="ev-reports" id="ev-reports"><div class="sk-line" style="width:60%;margin:8px 0"></div></div>`;
   $("#ev-read").innerHTML = `<div class="ev-ph">选一篇报道，正文显示在这里</div>`;
@@ -555,10 +557,55 @@ async function evToggleTranslate(id) {
   } catch (e) { toast(`翻译失败：${esc(e.message)}`); btn?.classList.remove("busy"); if (btn) btn.textContent = "中英对照"; }
 }
 
+async function evShowAnalysis(cid, title) {
+  const read = $("#ev-read");
+  if (!read) return;   // view switched away before the click resolved
+  EV.articleId = null;
+  $(".ev3")?.classList.add("has-article");   // narrow screens: right column takes over
+  $$(".ev-report").forEach((b) => b.classList.remove("active"));
+  $(".ev-analyze-btn")?.classList.add("busy");
+  read.innerHTML = `<div class="ev-analysis-loading"><i class="spin-dot"></i><div>gpt-5.5 正在生成深度事件分析…</div><div class="ev-al-sub">综合多家媒体报道，梳理来龙去脉与后续走势</div></div>`;
+  try {
+    const d = await api(`/api/cluster/${cid}/analysis`);
+    if (EV.clusterId !== cid || !$("#ev-read")) return;
+    renderAnalysis(d.analysis || {}, title);
+  } catch (e) {
+    if ($("#ev-read")) $("#ev-read").innerHTML = `<div class="ev-ph">分析生成失败：${esc(e.message)}</div>`;
+  } finally { $(".ev-analyze-btn")?.classList.remove("busy"); }
+}
+
+function evOddsClass(o) { return /高|high/i.test(o) ? "hi" : /低|low/i.test(o) ? "lo" : "mid"; }
+
+function renderAnalysis(a, title) {
+  // icon/name 必须是硬编码常量 — 两者都未经 esc()，只有 body 是已转义的 HTML
+  const sec = (icon, name, body) => body ? `<section class="an-sec"><h3 class="an-h"><span>${icon}</span>${name}</h3>${body}</section>` : "";
+  const facts = a.facts?.length
+    ? `<div class="an-facts">${a.facts.map((f) => `<div class="an-fact"><div class="an-fact-v">${esc(f.v)}</div><div class="an-fact-k">${esc(f.k)}</div></div>`).join("")}</div>` : "";
+  const timeline = a.timeline?.length
+    ? sec("⏱", "事件时间线", `<div class="an-timeline">${a.timeline.map((t) => `<div class="an-tl"><div class="an-tl-dot"></div><div class="an-tl-t">${esc(t.t)}</div><div class="an-tl-e">${esc(t.e)}</div></div>`).join("")}</div>`) : "";
+  const persp = a.perspectives?.length
+    ? sec("👥", "各方观点", `<div class="an-persp">${a.perspectives.map((p) => `<div class="an-p"><div class="an-p-who">${esc(p.who)}</div><div class="an-p-view">${esc(p.view)}</div></div>`).join("")}</div>`) : "";
+  const impact = a.impact?.length
+    ? sec("💥", "影响分析", `<div class="an-impact">${a.impact.map((i) => `<div class="an-i"><span class="an-i-area">${esc(i.area)}</span><span class="an-i-detail">${esc(i.detail)}</span></div>`).join("")}</div>`) : "";
+  const contro = a.controversy ? sec("⚡", "争议焦点", `<div class="an-contro">${esc(a.controversy)}</div>`) : "";
+  const outlook = a.outlook?.length
+    ? sec("🔮", "后续展望", `<div class="an-outlook">${a.outlook.map((o) => `<div class="an-o an-o-${evOddsClass(o.odds)}"><div class="an-o-head"><span class="an-o-path">${esc(o.path)}</span><span class="an-o-odds">可能性 ${esc(o.odds)}</span></div><div class="an-o-detail">${esc(o.detail)}</div></div>`).join("")}</div>`) : "";
+  $("#ev-read").innerHTML = `
+    <div class="ev-read-bar"><span class="ev-read-meta">🧠 AI 深度事件分析 · gpt-5.5</span></div>
+    <div class="ev-analysis">
+      <h1 class="an-title">${esc(title)}</h1>
+      ${facts}
+      ${sec("📋", "事件全景", a.panorama ? `<p class="an-panorama">${esc(a.panorama)}</p>` : "")}
+      ${timeline}${persp}${impact}${contro}${outlook}
+    </div>`;
+}
+
 $("#list").addEventListener("click", (e) => {
   if (S.view.mode !== "clusters") return;
   const item = e.target.closest(".ev-item");
   if (item) return evSelectCluster(item.dataset.cluster, item.dataset.title);
+  const az = e.target.closest(".ev-analyze-btn");
+  if (az) return evShowAnalysis(az.dataset.cluster, az.dataset.title);
   const rep = e.target.closest(".ev-report");
   if (rep) return evSelectArticle(rep.dataset.id);
   const tb = e.target.closest(".ev-btn-translate");

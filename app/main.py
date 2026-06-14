@@ -1059,6 +1059,37 @@ async def cluster_summary(cluster_id: int) -> Any:
     return {"summary": s, "cached": False}
 
 
+@app.get("/api/cluster/{cluster_id}/analysis", dependencies=[protected])
+async def cluster_analysis(cluster_id: int) -> Any:
+    """gpt-5.5 deep event analysis (panorama / timeline / perspectives / impact /
+    controversy / outlook / facts), cached by event title + member count."""
+    with db.get_db() as conn:
+        cl = conn.execute("SELECT top_title, member_count FROM clusters WHERE id=?",
+                          (cluster_id,)).fetchone()
+        if not cl:
+            raise HTTPException(404, "cluster not found")
+        members = [dict(r) for r in conn.execute(
+            "SELECT a.title, a.summary, f.title AS feed_title FROM articles a "
+            "JOIN feeds f ON f.id=a.feed_id WHERE a.cluster_id=? ORDER BY a.published",
+            (cluster_id,))]
+        key = "canalysis:" + hashlib.sha1(
+            f"{cl['top_title']}|{cl['member_count']}".encode()).hexdigest()[:16]
+        cached = db.get_meta(conn, key)
+    if cached:
+        try:
+            return {"analysis": json.loads(cached), "cached": True}
+        except json.JSONDecodeError:
+            pass
+    try:
+        a = await translate.analyze_cluster(cl["top_title"], members,
+                                            engine=_engine_for("summary"))
+    except Exception as exc:
+        return _translate_error(exc)
+    with db.get_db() as conn:
+        db.set_meta(conn, key, json.dumps(a, ensure_ascii=False))
+    return {"analysis": a, "cached": False}
+
+
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
 
 

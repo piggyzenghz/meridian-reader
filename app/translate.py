@@ -221,6 +221,51 @@ async def summarize_cluster(top_title: str, members: list[dict[str, Any]],
             "takeaway": str(parsed.get("takeaway", ""))}
 
 
+async def analyze_cluster(top_title: str, members: list[dict[str, Any]],
+                          engine: str = "gpt55") -> dict[str, Any]:
+    """Deep multi-source event analysis (much richer than summarize_cluster):
+    panorama, timeline, perspectives, impact, controversy, outlook, key facts."""
+    if not members:
+        raise TranslateError("cluster has no members")
+    lines = [f"[{m['feed_title']}] {m['title']} — {(m.get('summary') or '')[:160]}"
+             for m in members[:40]]
+    content = await _chat(
+        [
+            {"role": "system", "content": (
+                "你是资深新闻分析师。下面是同一事件被多家媒体报道的标题与摘要。"
+                "写一份深度事件分析,帮读者快速了解来龙去脉与后续走势。只输出 JSON："
+                '{"panorama":"事件全景(180-220字,讲清是什么事、起因、经过、现状)",'
+                '"timeline":[{"t":"时间(如6月12日)","e":"该节点发生了什么"}],'
+                '"perspectives":[{"who":"某一方或某媒体","view":"该方观点或立场(一句话)"}],'
+                '"impact":[{"area":"影响维度(经济/政治/科技/社会/市场 之一)","detail":"具体影响"}],'
+                '"controversy":"核心争议点或各方主要分歧(一段)",'
+                '"outlook":[{"path":"一种可能走向","odds":"高|中|低","detail":"分析依据"}],'
+                '"facts":[{"k":"指标名(≤6字,如 战争持续/受损基地)","v":"量化数值(≤8字醒目,如 105天/50+处/2个月)"}]}。'
+                "timeline 按时间先后 3-6 个关键节点;perspectives 3-5 方;impact 3-4 维;"
+                "outlook 2-3 种;facts 2-4 个**可量化的关键数字**(v 要简短醒目,只放能量化的,"
+                "不放长描述句)。客观中立,综合各家,基于报道不编造。"
+            )},
+            {"role": "user", "content": f"事件：{top_title}\n\n各家报道：\n" + "\n".join(lines)},
+        ],
+        max_tokens=2600, json_mode=True, engine=engine)
+    parsed = json.loads(content)
+    if not isinstance(parsed, dict):
+        raise TranslateError("unexpected analysis shape")
+
+    def _objs(key: str, fields: tuple) -> list[dict[str, str]]:
+        return [{f: str(x.get(f, "")) for f in fields}
+                for x in parsed.get(key, []) if isinstance(x, dict)]
+    return {
+        "panorama": str(parsed.get("panorama", "")),
+        "timeline": _objs("timeline", ("t", "e"))[:8],
+        "perspectives": _objs("perspectives", ("who", "view"))[:6],
+        "impact": _objs("impact", ("area", "detail"))[:5],
+        "controversy": str(parsed.get("controversy", "")),
+        "outlook": _objs("outlook", ("path", "odds", "detail"))[:4],
+        "facts": _objs("facts", ("k", "v"))[:6],
+    }
+
+
 async def score_clusters_ai(events: list[dict[str, Any]],
                             engine: str = "gpt55") -> list[dict[str, Any]]:
     """Batch-score event clusters: a concise Chinese title + a heat score
