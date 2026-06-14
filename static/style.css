@@ -58,6 +58,8 @@
   --danger: #f87171;
   --heat: #e8833a;
   --gold: #f2b56c;        /* decorative accent (gradients / hairlines) */
+  --active-bg: var(--surface-2);   /* keep dark active/hover as-is */
+  --hover-bg: var(--surface);
   --hl-bg: rgba(229, 161, 88, .26);
   --glass: rgba(16, 19, 27, .78);
   --shadow-lg: 0 24px 80px rgba(0, 0, 0, .55);
@@ -68,18 +70,20 @@
      base 乳白 #F9F4DC · 秋香 gold = unified accent (deep #876A10 readable / bright
      #D9B611 decorative) · 黛青/藕荷/竹月 inform the category hues (left-rail logic) */
   color-scheme: light;
-  --bg: #f9f4dc;          /* 乳白 */
-  --bg-elev: #fdf9e8;     /* lifted milk */
-  --surface: #fffdf3;     /* card warm-white */
-  --surface-2: #f1ead0;   /* inset milk */
-  --line: rgba(62, 92, 110, .15);     /* 黛青-tinted hairline */
-  --line-strong: rgba(62, 92, 110, .28);
-  --text: #2b2a20;        /* warm ink */
+  --bg: #fdfcf9;          /* white base (toned off the yellow — feedback) */
+  --bg-elev: #ffffff;
+  --surface: #ffffff;     /* white cards / panels */
+  --surface-2: #f2efe6;   /* warm-gray inset (skeletons / inputs) */
+  --line: rgba(120, 95, 30, .13);     /* warm hairline */
+  --line-strong: rgba(120, 95, 30, .24);
+  --text: #26241c;        /* warm near-black */
   --text-2: #5b5746;      /* muted */
   --text-3: #6c6850;      /* faint — AA-safe for meta text */
-  --accent: #876a10;      /* 秋香深金 — links / active / brand (warm, unifies the UI) */
-  --accent-hi: #6f560c;   /* deeper gold — hover / .pill.on fill (乳白 text stays readable) */
-  --accent-ink: #f9f4dc;  /* 乳白 — text on gold */
+  --accent: #876a10;      /* 秋香深金 — links / active / brand */
+  --accent-hi: #6f560c;   /* deeper gold — hover / .pill.on fill */
+  --accent-ink: #ffffff;  /* white text on gold */
+  --active-bg: color-mix(in srgb, var(--gold) 26%, transparent);  /* gold highlight (active) */
+  --hover-bg: color-mix(in srgb, var(--gold) 11%, transparent);   /* faint gold hover */
   --zh: #7a6420;          /* 秋香-brown — Chinese translation text */
   --c-markets: #467455;   /* 竹松绿 (from 竹月) */
   --c-world: #3e5c6e;     /* 黛青 */
@@ -87,13 +91,13 @@
   --c-ai: #277680;        /* 青碧 */
   --c-cn: #b5482e;        /* 朱赭 */
   --c-x: #33373e;         /* 墨 */
-  --danger: #c0392b;      /* readable red on milk-white */
+  --danger: #c0392b;      /* readable red */
   --heat: #9e5200;        /* deepened 秋香-amber — heat number (AA) */
-  --gold: #d9b611;        /* 秋香 — decorative gold (gradients / hairlines, card 金线感) */
-  --hl-bg: rgba(217, 182, 17, .32);   /* 秋香 gold highlighter */
-  --glass: rgba(249, 244, 220, .82);  /* 乳白 glass */
-  --shadow-lg: 0 24px 70px rgba(62, 92, 110, .18);   /* 黛青-tinted shadow */
-  --shadow-md: 0 8px 28px rgba(62, 92, 110, .12);
+  --gold: #d9b611;        /* 秋香 — bright decorative gold */
+  --hl-bg: rgba(217, 182, 17, .34);   /* 秋香 gold highlighter */
+  --glass: rgba(255, 255, 255, .86);  /* white glass */
+  --shadow-lg: 0 24px 70px rgba(80, 65, 25, .15);
+  --shadow-md: 0 8px 28px rgba(80, 65, 25, .1);
 }
 
 /* ── base ─────────────────────────────────────────── */
@@ -226,8 +230,8 @@ svg { display: block; }
   transition: background .16s, color .16s; text-align: left; width: 100%;
   position: relative;
 }
-.nav-item:hover { background: var(--surface); color: var(--text); }
-.nav-item.active { background: var(--surface-2); color: var(--text); }
+.nav-item:hover { background: var(--hover-bg); color: var(--text); }
+.nav-item.active { background: var(--active-bg); color: var(--text); }
 .nav-item.active::before {
   content: ""; position: absolute; left: 0; top: 22%; bottom: 22%;
   width: 3px; border-radius: 3px; background: var(--cat, var(--accent));
@@ -313,7 +317,7 @@ svg { display: block; }
 .topbar-actions { display: flex; align-items: center; gap: 4px; }
 .seg { display: flex; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 2px; margin-right: 6px; }
 .seg-btn { padding: 5px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 560; color: var(--text-3); transition: all .18s; }
-.seg-btn.active { background: var(--surface-2); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+.seg-btn.active { background: var(--active-bg); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
 
 /* ── ticker ───────────────────────────────────────── */
 .ticker {
