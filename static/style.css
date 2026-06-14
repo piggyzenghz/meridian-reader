@@ -55,36 +55,43 @@
   --c-ai: #2dd4de;
   --c-cn: #f0806d;
   --c-x: #d9dde6;
+  --danger: #f87171;
+  --heat: #e8833a;
   --hl-bg: rgba(229, 161, 88, .26);
   --glass: rgba(16, 19, 27, .78);
   --shadow-lg: 0 24px 80px rgba(0, 0, 0, .55);
   --shadow-md: 0 8px 32px rgba(0, 0, 0, .4);
 }
 [data-theme="light"] {
+  /* 乳白 · China-traditional-colors palette
+     base 乳白 #F9F4DC · 黛青 #3E5C6E (primary) · 秋香 #D9B611 (gold highlight)
+     · 藕荷 #E4C6D0 / 竹月 #C7D7C0 informing the soft category hues */
   color-scheme: light;
-  --bg: #f5f2ea;
-  --bg-elev: #faf8f2;
-  --surface: #fffefb;
-  --surface-2: #f0ecdf;
-  --line: rgba(44, 38, 24, .1);
-  --line-strong: rgba(44, 38, 24, .18);
-  --text: #1d1a12;
-  --text-2: #5d594b;
-  --text-3: #9a947f;
-  --accent: #b0721f;
-  --accent-hi: #95600f;
-  --accent-ink: #fff8ec;
-  --zh: #8a6e3f;
-  --c-markets: #15803d;
-  --c-world: #1d6fd1;
-  --c-tech: #7c4fd8;
-  --c-ai: #0e7f8c;
-  --c-cn: #bb4530;
-  --c-x: #2b2d33;
-  --hl-bg: rgba(176, 114, 31, .22);
-  --glass: rgba(250, 248, 242, .82);
-  --shadow-lg: 0 24px 70px rgba(60, 48, 20, .22);
-  --shadow-md: 0 8px 28px rgba(60, 48, 20, .14);
+  --bg: #f9f4dc;          /* 乳白 */
+  --bg-elev: #fdf9e8;     /* lifted milk */
+  --surface: #fffdf3;     /* card warm-white */
+  --surface-2: #f1ead0;   /* inset milk */
+  --line: rgba(62, 92, 110, .15);     /* 黛青-tinted hairline */
+  --line-strong: rgba(62, 92, 110, .28);
+  --text: #2b2a20;        /* warm ink */
+  --text-2: #5b5746;      /* muted */
+  --text-3: #6c6850;      /* faint — AA-safe for meta text */
+  --accent: #3e5c6e;      /* 黛青 — links / active / brand */
+  --accent-hi: #314a5a;   /* deeper 黛青 — hover / fills / gradient end */
+  --accent-ink: #f9f4dc;  /* 乳白 — text on 黛青 */
+  --zh: #7a6420;          /* 秋香-brown — Chinese translation text */
+  --c-markets: #467455;   /* 竹松绿 (from 竹月) */
+  --c-world: #3e5c6e;     /* 黛青 */
+  --c-tech: #8c5b74;      /* 藕紫 (from 藕荷) */
+  --c-ai: #277680;        /* 青碧 */
+  --c-cn: #b5482e;        /* 朱赭 */
+  --c-x: #33373e;         /* 墨 */
+  --danger: #c0392b;      /* readable red on milk-white */
+  --heat: #9e5200;        /* deepened 秋香-amber — heat number (AA) */
+  --hl-bg: rgba(217, 182, 17, .32);   /* 秋香 gold highlighter */
+  --glass: rgba(249, 244, 220, .82);  /* 乳白 glass */
+  --shadow-lg: 0 24px 70px rgba(62, 92, 110, .18);   /* 黛青-tinted shadow */
+  --shadow-md: 0 8px 28px rgba(62, 92, 110, .12);
 }
 
 /* ── base ─────────────────────────────────────────── */
@@ -189,7 +196,7 @@ svg { display: block; }
 #auth-form button:hover { transform: translateY(-2px); box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 35%, transparent); }
 .auth-arrow { transition: transform .2s; }
 #auth-form button:hover .auth-arrow { transform: translateX(4px); }
-.auth-error { margin-top: 16px; color: #f87171; font-size: 13px; min-height: 20px; }
+.auth-error { margin-top: 16px; color: var(--danger); font-size: 13px; min-height: 20px; }
 .auth-card.shake { animation: shake .4s; }
 @keyframes shake { 20%, 60% { transform: translateX(-9px); } 40%, 80% { transform: translateX(9px); } }
 
@@ -625,7 +632,7 @@ svg { display: block; }
 .mute-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 .mute-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); font-size: 12px; color: var(--text-2); }
 .mute-chip button { color: var(--text-3); font-size: 13px; }
-.mute-chip button:hover { color: #f06d6d; }
+.mute-chip button:hover { color: var(--danger); }
 
 .feed-list { overflow-y: auto; padding: 12px 14px 18px; }
 .feed-group-label { padding: 12px 9px 6px; font-size: 10.5px; letter-spacing: .15em; text-transform: uppercase; color: var(--cat, var(--text-3)); font-weight: 700; }
@@ -634,7 +641,7 @@ svg { display: block; }
 .feed-row-main { flex: 1; min-width: 0; }
 .feed-row-title { font-size: 13.5px; font-weight: 570; }
 .feed-row-url { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.feed-row-err { font-size: 11px; color: #f87171; }
+.feed-row-err { font-size: 11px; color: var(--danger); }
 .switch { position: relative; width: 34px; height: 20px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--line-strong); transition: background .2s; flex: none; }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-3); transition: transform .25s var(--ease-spring), background .2s; }
 .switch.on { background: color-mix(in srgb, var(--accent) 55%, var(--surface-2)); }
@@ -680,7 +687,7 @@ svg { display: block; }
 .ev-item:hover { background: var(--surface); }
 .ev-item.active { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--c-x); }
 .ev-item-badge { font-size: 10.5px; font-weight: 650; color: var(--c-x); display: flex; align-items: center; gap: 7px; }
-.ev-item-heat { color: #E8833A; font-weight: 800; font-variant-numeric: tabular-nums; }
+.ev-item-heat { color: var(--heat); font-weight: 800; font-variant-numeric: tabular-nums; }
 .ev-item-title { font-size: 13.5px; line-height: 1.45; color: var(--text); font-weight: 550; }
 .ev-item-title-en { font-size: 11px; line-height: 1.4; color: var(--text-3); }
 .ev-event-title { font-family: var(--font-text); font-size: 17px; font-weight: 650; line-height: 1.4; margin-bottom: 14px; text-wrap: pretty; }
@@ -818,7 +825,7 @@ mark.hl { background: var(--hl-bg); color: inherit; border-radius: 3px; padding:
 .market-price { font-size: 14px; font-variant-numeric: tabular-nums; color: var(--text); text-align: right; }
 .market-chg { grid-column: 2; font-size: 11.5px; font-variant-numeric: tabular-nums; text-align: right; }
 .market-row.up .market-chg { color: var(--c-markets); }
-.market-row.down .market-chg { color: #f06d6d; }
+.market-row.down .market-chg { color: var(--danger); }
 .market-foot { padding: 12px 4px 4px; font-size: 10.5px; color: var(--text-3); }
 .market-skel { padding: 4px; }
 @media (max-width: 980px) {
@@ -847,7 +854,7 @@ mark.hl { background: var(--hl-bg); color: inherit; border-radius: 3px; padding:
 .hl-card-text:hover { color: var(--accent-hi); }
 .hl-card-meta { margin-top: 8px; font-size: 11.5px; color: var(--text-3); display: flex; gap: 9px; align-items: center; }
 .hl-card-meta .del { margin-left: auto; color: var(--text-3); cursor: pointer; padding: 2px 6px; border-radius: 6px; }
-.hl-card-meta .del:hover { color: #f87171; background: rgba(248,113,113,.1); }
+.hl-card-meta .del:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 
 /* ── v1.5: monitors · tts · type controls · related ── */
 .mon-head {
@@ -870,7 +877,7 @@ mark.hl { background: var(--hl-bg); color: inherit; border-radius: 3px; padding:
 .mon-count { font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .mon-del { opacity: 0; font-size: 14px; color: var(--text-3); padding: 0 3px; transition: opacity .15s; }
 .mon-item:hover .mon-del { opacity: .7; }
-.mon-del:hover { color: #f06d6d; opacity: 1; }
+.mon-del:hover { color: var(--danger); opacity: 1; }
 
 /* type (font/line-height) popover */
 .type-pop {
