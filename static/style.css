@@ -57,6 +57,7 @@
   --c-x: #d9dde6;
   --danger: #f87171;
   --heat: #e8833a;
+  --gold: #f2b56c;        /* decorative accent (gradients / hairlines) */
   --hl-bg: rgba(229, 161, 88, .26);
   --glass: rgba(16, 19, 27, .78);
   --shadow-lg: 0 24px 80px rgba(0, 0, 0, .55);
@@ -88,6 +89,7 @@
   --c-x: #33373e;         /* 墨 */
   --danger: #c0392b;      /* readable red on milk-white */
   --heat: #9e5200;        /* deepened 秋香-amber — heat number (AA) */
+  --gold: #d9b611;        /* 秋香 — decorative gold (gradients / hairlines, card 金线感) */
   --hl-bg: rgba(217, 182, 17, .32);   /* 秋香 gold highlighter */
   --glass: rgba(249, 244, 220, .82);  /* 乳白 glass */
   --shadow-lg: 0 24px 70px rgba(62, 92, 110, .18);   /* 黛青-tinted shadow */
@@ -285,7 +287,7 @@ svg { display: block; }
 .sidebar-foot { border-top: 1px solid var(--line); padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .usage { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .usage-bar { width: 54px; height: 4px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
-.usage-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-hi)); border-radius: 4px; transition: width .6s var(--ease-spring); }
+.usage-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--gold)); border-radius: 4px; transition: width .6s var(--ease-spring); }
 .usage span { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
 .foot-actions { display: flex; gap: 2px; }
 
@@ -344,7 +346,7 @@ svg { display: block; }
   background: linear-gradient(var(--bg) 72%, transparent);
   display: flex; align-items: center; gap: 12px;
 }
-.group-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.group-head::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--gold) 55%, transparent); }
 .group-head .num { color: var(--accent); font-family: var(--font-display); font-style: italic; font-size: 13px; letter-spacing: 0; text-transform: none; }
 
 .item {
@@ -431,7 +433,7 @@ svg { display: block; }
 }
 .reader.open { transform: translateX(0); visibility: visible; }
 .reader-progress { position: absolute; top: 0; left: 0; right: 0; height: 2.5px; z-index: 5; }
-.reader-progress i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-hi)); }
+.reader-progress i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--gold)); }
 .reader-bar {
   display: flex; align-items: center; gap: 10px;
   padding: 12px 18px;
@@ -775,7 +777,7 @@ svg { display: block; }
   .ev-back { display: inline-flex; position: sticky; top: 8px; z-index: 5; margin: 10px 0 2px 16px; padding: 6px 13px; border-radius: 20px; background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(8px); box-shadow: 0 2px 10px rgba(0, 0, 0, .15); }
   .ev-read-bar { position: static; backdrop-filter: none; }   /* the back pill is the sticky nav on mobile */
 }
-.item-progressbar { position: absolute; left: 0; bottom: -1px; height: 2px; background: linear-gradient(90deg, var(--accent), var(--accent-hi)); opacity: .75; border-radius: 2px; transition: width .4s; }
+.item-progressbar { position: absolute; left: 0; bottom: -1px; height: 2px; background: linear-gradient(90deg, var(--accent), var(--gold)); opacity: .75; border-radius: 2px; transition: width .4s; }
 .item-min { font-variant-numeric: tabular-nums; }
 .item-later-mini { width: 11.5px; height: 11.5px; stroke: var(--c-world); fill: none; stroke-width: 2; }
 
@@ -837,7 +839,7 @@ mark.hl { background: var(--hl-bg); color: inherit; border-radius: 3px; padding:
 .digest-headline { margin-top: 16px; font-family: var(--font-display); font-weight: 600; font-variation-settings: "opsz" 60; font-size: clamp(23px, 3.4vw, 30px); line-height: 1.35; letter-spacing: -.015em; text-wrap: balance; }
 .digest-sec { margin-top: 34px; }
 .digest-sec-title { font-size: 12px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; color: var(--cat, var(--accent)); margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
-.digest-sec-title::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.digest-sec-title::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--gold) 55%, transparent); }
 .digest-item { padding: 13px 0; border-bottom: 1px solid var(--line); }
 .digest-item-t { font-size: 16px; font-weight: 650; letter-spacing: -.01em; line-height: 1.45; }
 .digest-item-s { margin-top: 5px; font-family: var(--font-serif-zh); font-size: 14.5px; line-height: 1.85; color: var(--text-2); }
