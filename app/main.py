@@ -1010,7 +1010,9 @@ async def list_clusters() -> dict[str, Any]:
             "SELECT id, top_title, title_zh, heat, member_count, source_count, "
             "first_seen, last_seen FROM clusters "
             "ORDER BY heat DESC, source_count DESC, last_seen DESC LIMIT 60")]
-    return {"clusters": rows}
+        refreshed = conn.execute("SELECT MAX(created_at) r FROM clusters").fetchone()["r"]
+    return {"clusters": rows, "refreshed_at": refreshed or 0,
+            "window_days": cluster.RECENT_DAYS}
 
 
 @app.get("/api/cluster/{cluster_id}", dependencies=[protected])

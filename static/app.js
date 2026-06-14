@@ -92,10 +92,11 @@ const fmtTime = (ts) => {
   const d = new Date(ts * 1000), now = Date.now(), diff = (now - d) / 60000;
   if (diff < 1) return "刚刚";
   if (diff < 60) return `${Math.floor(diff)} 分钟前`;
-  if (diff < 60 * 24 && d.getDate() === new Date().getDate())
-    return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" }) +
-    " " + d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  const TZ = "Asia/Shanghai";   // 东八区铁律：时间一律 CST，不跟浏览器/服务器时区漂移
+  const clock = d.toLocaleTimeString("zh-CN", { timeZone: TZ, hour: "2-digit", minute: "2-digit" });
+  const dayKey = (x) => x.toLocaleDateString("en-CA", { timeZone: TZ });
+  if (dayKey(d) === dayKey(new Date())) return clock;
+  return d.toLocaleDateString("zh-CN", { timeZone: TZ, month: "short", day: "numeric" }) + " " + clock;
 };
 
 function groupKey(ts) {
@@ -470,6 +471,9 @@ async function renderClustersView() {
   try {
     const data = await api("/api/clusters");
     const list = $("#ev-list");
+    $("#view-count").textContent = data.refreshed_at
+      ? `近 ${data.window_days || 5} 天热点 · 更新于 ${fmtTime(data.refreshed_at)}`
+      : "";
     if (!data.clusters?.length) { list.innerHTML = `<div class="ev-ph">还没有聚合的事件<br><span style="font-size:11px">同一事件被 ≥2 家媒体报道时自动归并</span></div>`; return; }
     list.innerHTML = data.clusters.map((c) => `
       <button class="ev-item" data-cluster="${c.id}" data-title="${esc(c.title_zh || c.top_title)}">
