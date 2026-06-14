@@ -14,3 +14,9 @@ run_local.sh
 # contain an internal RSSHub domain + personal X follow list, useless to others
 deploy/migrate_*.py
 deploy/_*.py
+
+# local-only orchestration/validation scripts (never publish)
+.audit_workflow.js
+.research_workflow.js
+.gpt55_review.py
+.validate_*.py
