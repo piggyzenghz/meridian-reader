@@ -1087,11 +1087,15 @@ async def import_opml(body: OpmlIn) -> dict[str, Any]:
 @app.get("/api/clusters", dependencies=[protected])
 async def list_clusters() -> dict[str, Any]:
     """Surfaced event clusters (same event across >=2 sources), newest first."""
+    cutoff = int(time.time()) - 12 * 3600   # heat baseline ~12h ago → rising/cooling trend
     with db.get_db() as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT id, top_title, title_zh, heat, member_count, source_count, "
-            "first_seen, last_seen FROM clusters "
-            "ORDER BY heat DESC, source_count DESC, last_seen DESC LIMIT 60")]
+            "SELECT c.id, c.top_title, c.title_zh, c.heat, c.member_count, c.source_count, "
+            "c.first_seen, c.last_seen, "
+            "(SELECT h.heat FROM cluster_heat_history h "
+            " WHERE h.cluster_id=c.id AND h.ts>=? ORDER BY h.ts ASC LIMIT 1) AS heat_prev "
+            "FROM clusters c "
+            "ORDER BY c.heat DESC, c.source_count DESC, c.last_seen DESC LIMIT 60", (cutoff,))]
         refreshed = int(db.get_meta(conn, "clusters_refreshed", "0"))
     return {"clusters": rows, "refreshed_at": refreshed,
             "window_days": cluster.RECENT_DAYS}

@@ -736,7 +736,11 @@ svg { display: block; }
 .ev-item-heat { color: var(--heat); font-weight: 800; font-variant-numeric: tabular-nums; }
 .ev-badge { font-size: 9px; font-weight: 800; padding: 1px 5px; border-radius: 5px; letter-spacing: .05em; }
 .ev-badge.hot { color: #fff; background: var(--danger); }
+.ev-badge.warm { color: var(--accent-ink); background: var(--accent); }
 .ev-badge.new { color: var(--accent-ink); background: var(--bamboo); }
+.ev-trend { font-size: 8.5px; font-weight: 800; margin-left: 1px; vertical-align: middle; }
+.ev-trend.up { color: var(--danger); }
+.ev-trend.down { color: var(--text-3); }
 .ev-item-title { font-size: 13.5px; line-height: 1.45; color: var(--text); font-weight: 550; }
 .ev-item-title-en { font-size: 11px; line-height: 1.4; color: var(--text-3); }
 .ev-event-title { font-family: var(--font-text); font-size: 17px; font-weight: 650; line-height: 1.4; margin-bottom: 14px; text-wrap: pretty; }

@@ -478,10 +478,21 @@ function clusterBodyHtml(a, blocks) {
   return `<div class="fulltext-hint"><span>该源只提供摘要：${esc(a.summary || "无内容")}</span></div>`;
 }
 
-// event time/heat badge: 爆 (very hot) / 新 (surfaced in the last 6h)
+// event intensity badge: 爆 (breaking ≥85) / 热 (high ≥60) / 新 (surfaced <6h)
 function eventBadge(c) {
-  if ((c.heat || 0) >= 85) return `<span class="ev-badge hot">爆</span>`;
+  const heat = c.heat || 0;
+  if (heat >= 85) return `<span class="ev-badge hot">爆</span>`;
+  if (heat >= 60) return `<span class="ev-badge warm">热</span>`;
   if (c.first_seen && Date.now() / 1000 - c.first_seen < 6 * 3600) return `<span class="ev-badge new">新</span>`;
+  return "";
+}
+
+// heat direction vs the ~12h baseline snapshot (cluster_heat_history) — 升温/回落
+function heatTrend(c) {
+  if (c.heat_prev == null) return "";
+  const d = (c.heat || 0) - c.heat_prev;
+  if (d >= 8) return `<span class="ev-trend up" title="热度上升">▲</span>`;
+  if (d <= -8) return `<span class="ev-trend down" title="热度回落">▼</span>`;
   return "";
 }
 
@@ -508,7 +519,7 @@ async function renderClustersView() {
     if (!data.clusters?.length) { list.innerHTML = `<div class="ev-ph">还没有聚合的事件<br><span style="font-size:11px">同一事件被 ≥2 家媒体报道时自动归并</span></div>`; return; }
     list.innerHTML = data.clusters.map((c) => `
       <button class="ev-item" data-cluster="${c.id}" data-title="${esc(c.title_zh || c.top_title)}">
-        <span class="ev-item-badge">${eventBadge(c)}${c.heat ? `<span class="ev-item-heat">🔥 ${c.heat}</span>` : ""}<span>◈ ${c.source_count} 家 · ${c.member_count} 篇</span></span>
+        <span class="ev-item-badge">${eventBadge(c)}${c.heat ? `<span class="ev-item-heat">🔥 ${c.heat}${heatTrend(c)}</span>` : ""}<span>◈ ${c.source_count} 家 · ${c.member_count} 篇</span></span>
         <span class="ev-item-title">${esc(c.title_zh || c.top_title)}</span>
         ${c.title_zh ? `<span class="ev-item-title-en">${esc(c.top_title)}</span>` : ""}</button>`).join("");
     if (EV.clusterId)   // ec-deep direct entry selected a cluster before the list loaded — sync highlight
