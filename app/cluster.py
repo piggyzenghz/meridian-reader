@@ -119,6 +119,8 @@ def recluster() -> int:
         pub = a["published"]
         best, best_score = None, 0.0
         for c in clusters:
+            if len(c["vec"]) != len(vec):                      # dim mismatch (model change/dirty) — never merge
+                continue
             if len(c["members"]) >= MAX_MEMBERS:               # ceiling reached — no more merges
                 continue
             if pub - c["last_pub"] > WINDOW_DAYS * 86400:       # latest member too old
@@ -149,18 +151,24 @@ def recluster() -> int:
                              "feeds": {a["feed_id"]}, "last_pub": pub,
                              "first_pub": pub, "top_title": a["title"]})
     now = int(time.time())
+    surfaced_clusters = [c for c in clusters if len(c["feeds"]) >= 2]  # cross-source filter
     with db.get_db() as conn:
+        # map each currently-assigned article → its cluster id, so a re-formed event
+        # can INHERIT the id of the prior cluster most of its members belonged to.
+        # This survives anchor changes (e.g. an older article embedded late) — far
+        # more stable than keying on members[0], so drill-in links don't 404.
+        prior = {r["id"]: r["cluster_id"] for r in conn.execute(
+            "SELECT id, cluster_id FROM articles WHERE cluster_id!=0")}
+        existing = {r["id"] for r in conn.execute("SELECT id FROM clusters")}
         conn.execute("UPDATE articles SET cluster_id=0 WHERE cluster_id!=0")
-        seen: set[str] = set()
+        used: set[int] = set()
         surfaced = 0
-        for c in clusters:
-            if len(c["feeds"]) < 2:          # cross-source filter
-                continue
-            ckey = str(c["members"][0])      # anchor article id = stable identity
-            seen.add(ckey)
-            row = conn.execute("SELECT id FROM clusters WHERE ckey=?", (ckey,)).fetchone()
-            if row:                          # same event re-formed → keep id (and its caches)
-                cid = row["id"]
+        for c in surfaced_clusters:
+            votes = Counter(prior.get(mid, 0) for mid in c["members"])
+            votes.pop(0, None)               # 0 = previously unclustered
+            cid = next((cand for cand, _ in votes.most_common()
+                        if cand in existing and cand not in used), None)
+            if cid is not None:              # inherit prior id → keep id + gpt-5.5 caches
                 conn.execute(
                     "UPDATE clusters SET top_title=?, member_count=?, source_count=?, "
                     "first_seen=?, last_seen=? WHERE id=?",
@@ -168,28 +176,30 @@ def recluster() -> int:
                      c["first_pub"], c["last_pub"], cid))
             else:
                 cur = conn.execute(
-                    "INSERT INTO clusters (ckey, top_title, member_count, source_count, "
-                    "first_seen, last_seen, created_at) VALUES (?,?,?,?,?,?,?)",
-                    (ckey, c["top_title"][:300], len(c["members"]), len(c["feeds"]),
+                    "INSERT INTO clusters (top_title, member_count, source_count, "
+                    "first_seen, last_seen, created_at) VALUES (?,?,?,?,?,?)",
+                    (c["top_title"][:300], len(c["members"]), len(c["feeds"]),
                      c["first_pub"], c["last_pub"], now))
                 cid = cur.lastrowid
+            used.add(cid)
             conn.executemany("UPDATE articles SET cluster_id=? WHERE id=?",
                              [(cid, mid) for mid in c["members"]])
             surfaced += 1
-        if seen:                             # drop clusters that no longer surface
-            ph = ",".join("?" * len(seen))
-            conn.execute(f"DELETE FROM clusters WHERE ckey NOT IN ({ph})", tuple(seen))
-        else:
-            conn.execute("DELETE FROM clusters")
+        gone = existing - used               # clusters that no longer surface
+        if gone:
+            qm = ",".join("?" * len(gone))
+            conn.execute(f"DELETE FROM clusters WHERE id IN ({qm})", tuple(gone))
+            # clean their gpt-5.5 score/summary caches so a future id can't read stale meta
+            conn.executemany("DELETE FROM meta WHERE key=?",
+                             [(f"cheat:{g}",) for g in gone] + [(f"csum:{g}",) for g in gone])
         db.set_meta(conn, "clusters_refreshed", str(now))  # recluster timestamp for "更新于"
     return surfaced
 
 
 def _score_key(cluster_id: int) -> str:
-    # keyed on the STABLE cluster id (preserved across reclusters via the ckey
-    # UPSERT). The old top_title key drifted every cycle — top_title is the newest
-    # member's headline, so each new report changed the key and re-billed gpt-5.5
-    # on exactly the hottest events.
+    # keyed on the stable cluster id (preserved across reclusters via member-vote
+    # inheritance in recluster). The cache value carries sc/mc so the event is
+    # re-scored when it materially grows (see score_clusters), not frozen forever.
     return f"cheat:{cluster_id}"
 
 
@@ -209,11 +219,19 @@ async def score_clusters() -> int:
     with db.get_db() as conn:
         for r in rows:
             hit = db.get_meta(conn, _score_key(r["id"]))
-            try:
-                cached[r["id"]] = json.loads(hit) if hit else None
-            except json.JSONDecodeError:
-                cached[r["id"]] = None
-            if cached[r["id"]] is None:
+            obj = None
+            if hit:
+                try:
+                    obj = json.loads(hit)
+                except json.JSONDecodeError:
+                    obj = None
+            # re-score when the event materially grows (new source, or report count
+            # jumps) — keying on id alone would freeze heat/中文标题 as the event develops.
+            stale = obj and (r["source_count"] > obj.get("sc", 0)
+                             or r["member_count"] - obj.get("mc", 0) >= max(4, obj.get("mc", 0) // 2))
+            if obj and not stale:
+                cached[r["id"]] = obj
+            else:
                 need.append(r)
     fresh = {}
     if need:
@@ -222,7 +240,8 @@ async def score_clusters() -> int:
         for idx, r in enumerate(need):
             s = by_i.get(idx)
             if s:
-                fresh[r["id"]] = {"title_zh": s["title_zh"], "heat": s["heat"]}
+                fresh[r["id"]] = {"title_zh": s["title_zh"], "heat": s["heat"],
+                                  "sc": r["source_count"], "mc": r["member_count"]}
     with db.get_db() as conn:   # single write block: cache fresh + apply all scores
         for r in need:
             if r["id"] in fresh:

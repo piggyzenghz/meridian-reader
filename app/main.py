@@ -591,6 +591,7 @@ class ReadAllIn(BaseModel):
     monitor: str = ""
     q: str = ""
     before: int = 0
+    before_id: int = 0
 
 
 @app.post("/api/read-all", dependencies=[protected])
@@ -601,7 +602,10 @@ async def read_all(body: ReadAllIn) -> dict[str, Any]:
     where, params = _article_filters(body.category, body.feed_id, body.filter,
                                      body.tag, body.monitor, body.q)
     where.append("a.is_read=0")
-    if body.before:
+    if body.before and body.before_id:  # compound cursor — don't mark same-second
+        where.append("(a.published < ? OR (a.published = ? AND a.id <= ?))")
+        params += [body.before, body.before, body.before_id]  # higher-id (newer) items
+    elif body.before:
         where.append("a.published <= ?")
         params.append(body.before)
     apply_mutes = not body.q and not body.monitor

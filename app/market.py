@@ -30,20 +30,22 @@ async def _quote(client: httpx.AsyncClient, name: str, symbol: str) -> dict[str,
         result = resp.json()["chart"]["result"][0]
         meta = result["meta"]
         price = meta.get("regularMarketPrice")
-        prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+        # DAILY change needs the PREVIOUS DAY's close — `previousClose`, NOT
+        # `chartPreviousClose` (with range=1mo that's the pre-range baseline ~a
+        # month back, which would turn the day-change into a month-change).
+        prev = meta.get("previousClose") or meta.get("regularMarketPreviousClose")
         quote_list = result.get("indicators", {}).get("quote") or [{}]
         closes = [c for c in (quote_list[0].get("close") or []) if c is not None]
-        if not prev and len(closes) >= 2:  # fall back to the penultimate daily close
+        if prev is None and len(closes) >= 2:  # fall back to the penultimate daily close
             prev = closes[-2]
             price = price or closes[-1]
-        if price is None or not prev:
+        if price is None or prev is None or prev == 0:
             return None
         change = price - prev
-        # monthly trend sparkline — downsample the daily closes to ~24 points
+        # monthly trend sparkline — downsample to ~24 points, keeping first & last
         spark = closes
         if len(spark) > 24:
-            step = len(spark) / 24
-            spark = [spark[int(i * step)] for i in range(24)]
+            spark = [spark[round(i * (len(spark) - 1) / 23)] for i in range(24)]
         return {
             "name": name, "symbol": symbol,
             "price": round(price, 2),

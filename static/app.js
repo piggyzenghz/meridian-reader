@@ -1510,8 +1510,9 @@ $("#btn-readall").addEventListener("click", async () => {
   if (v.tag) body.tag = v.tag;
   if (v.monitor) body.monitor = v.monitor;
   if (v.q) body.q = v.q;
-  // only mark what the user has had a chance to see (newest loaded item)
+  // only mark what the user has had a chance to see (newest loaded item) — compound cursor
   body.before = S.articles[0]?.published || Math.floor(Date.now() / 1000);
+  body.before_id = S.articles[0]?.id || 0;
   const data = await api("/api/read-all", { method: "POST", body });
   toast(`已读 <b>${data.marked}</b> 篇`);
   viewCacheClear();
