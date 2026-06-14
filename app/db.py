@@ -146,6 +146,11 @@ COLUMN_MIGRATIONS = [
     # gpt-5.5 event scoring: Chinese event title (左列中英对照) + heat (排序)
     "ALTER TABLE clusters ADD COLUMN title_zh TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE clusters ADD COLUMN heat INTEGER NOT NULL DEFAULT 0",
+    # stable cluster identity (anchor article id) so a recluster can UPSERT and
+    # keep the cluster's id + gpt-5.5 caches across rebuilds, instead of churning
+    # a fresh id every cycle (which 404'd users who had drilled into an old id).
+    "ALTER TABLE clusters ADD COLUMN ckey TEXT NOT NULL DEFAULT ''",
+    "CREATE INDEX IF NOT EXISTS idx_clusters_ckey ON clusters(ckey)",
 ]
 
 

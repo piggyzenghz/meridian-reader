@@ -30,6 +30,10 @@ WINDOW_DAYS = 4                        # don't merge into clusters older than th
 SIGMA_DAYS = 1.5                       # temporal decay width
 RECENT_DAYS = 5                        # only cluster the last N days
 EMBED_BATCH = 400                      # cap embeddings per incremental run
+MAX_MEMBERS = 80                       # backstop ceiling — the anchor gate is the real arbiter;
+                                       # this only stops pathological runaway, not normal big events
+MAX_SPAN_DAYS = WINDOW_DAYS            # a cluster can't span longer than this from its first article
+ANCHOR_SIM = 0.50                      # a new article must also resemble the cluster's FIRST article
 
 _lock = asyncio.Lock()
 
@@ -115,7 +119,11 @@ def recluster() -> int:
         pub = a["published"]
         best, best_score = None, 0.0
         for c in clusters:
-            if pub - c["last_pub"] > WINDOW_DAYS * 86400:
+            if len(c["members"]) >= MAX_MEMBERS:               # ceiling reached — no more merges
+                continue
+            if pub - c["last_pub"] > WINDOW_DAYS * 86400:       # latest member too old
+                continue
+            if pub - c["first_pub"] > MAX_SPAN_DAYS * 86400:    # event has run too long → likely drift
                 continue
             dense = _cos_vec(vec, c["vec"])
             sparse = _cos_cnt(tri, c["tri"])
@@ -124,7 +132,11 @@ def recluster() -> int:
             score = W_DENSE * dense + W_SPARSE * sparse + W_TIME * temporal
             if score > best_score:
                 best, best_score = c, score
-        if best and best_score >= THRESHOLD:
+        # anchor gate: the centroid drifts as members are averaged in, eventually
+        # matching almost anything. Also require similarity to the cluster's FIRST
+        # (anchor) article — this is what stops the snowball that produced the
+        # 255-article junk clusters (unrelated stories sharing one drifted centroid).
+        if best and best_score >= THRESHOLD and _cos_vec(vec, best["anchor"]) >= ANCHOR_SIM:
             n = len(best["members"])
             best["vec"] = [(best["vec"][i] * n + vec[i]) / (n + 1) for i in range(len(vec))]
             best["tri"] += tri
@@ -133,39 +145,58 @@ def recluster() -> int:
             best["last_pub"] = max(best["last_pub"], pub)
             best["top_title"] = a["title"]   # newest member's title
         else:
-            clusters.append({"vec": vec, "tri": tri, "members": [a["id"]],
+            clusters.append({"vec": vec, "anchor": vec[:], "tri": tri, "members": [a["id"]],
                              "feeds": {a["feed_id"]}, "last_pub": pub,
                              "first_pub": pub, "top_title": a["title"]})
     now = int(time.time())
     with db.get_db() as conn:
-        conn.execute("DELETE FROM clusters")
         conn.execute("UPDATE articles SET cluster_id=0 WHERE cluster_id!=0")
+        seen: set[str] = set()
         surfaced = 0
         for c in clusters:
             if len(c["feeds"]) < 2:          # cross-source filter
                 continue
-            cur = conn.execute(
-                "INSERT INTO clusters (top_title, member_count, source_count, "
-                "first_seen, last_seen, created_at) VALUES (?,?,?,?,?,?)",
-                (c["top_title"][:300], len(c["members"]), len(c["feeds"]),
-                 c["first_pub"], c["last_pub"], now))
-            cid = cur.lastrowid
+            ckey = str(c["members"][0])      # anchor article id = stable identity
+            seen.add(ckey)
+            row = conn.execute("SELECT id FROM clusters WHERE ckey=?", (ckey,)).fetchone()
+            if row:                          # same event re-formed → keep id (and its caches)
+                cid = row["id"]
+                conn.execute(
+                    "UPDATE clusters SET top_title=?, member_count=?, source_count=?, "
+                    "first_seen=?, last_seen=? WHERE id=?",
+                    (c["top_title"][:300], len(c["members"]), len(c["feeds"]),
+                     c["first_pub"], c["last_pub"], cid))
+            else:
+                cur = conn.execute(
+                    "INSERT INTO clusters (ckey, top_title, member_count, source_count, "
+                    "first_seen, last_seen, created_at) VALUES (?,?,?,?,?,?,?)",
+                    (ckey, c["top_title"][:300], len(c["members"]), len(c["feeds"]),
+                     c["first_pub"], c["last_pub"], now))
+                cid = cur.lastrowid
             conn.executemany("UPDATE articles SET cluster_id=? WHERE id=?",
                              [(cid, mid) for mid in c["members"]])
             surfaced += 1
+        if seen:                             # drop clusters that no longer surface
+            ph = ",".join("?" * len(seen))
+            conn.execute(f"DELETE FROM clusters WHERE ckey NOT IN ({ph})", tuple(seen))
+        else:
+            conn.execute("DELETE FROM clusters")
+        db.set_meta(conn, "clusters_refreshed", str(now))  # recluster timestamp for "更新于"
     return surfaced
 
 
-def _score_key(top_title: str) -> str:
-    # keyed on title only — member_count in the key would re-score an event on
-    # every +1 article, burning gpt-5.5 quota for no signal change
-    return "cheat:" + hashlib.sha1(top_title.encode()).hexdigest()[:16]
+def _score_key(cluster_id: int) -> str:
+    # keyed on the STABLE cluster id (preserved across reclusters via the ckey
+    # UPSERT). The old top_title key drifted every cycle — top_title is the newest
+    # member's headline, so each new report changed the key and re-billed gpt-5.5
+    # on exactly the hottest events.
+    return f"cheat:{cluster_id}"
 
 
 async def score_clusters() -> int:
     """gpt-5.5: give each surfaced cluster a Chinese title + heat score (for the
-    left column's 中英对照 and heat-based sort). Cached by top_title so unchanged
-    events aren't re-scored. Returns newly-scored count. Best-effort — clusters
+    left column's 中英对照 and heat-based sort). Cached by stable cluster id so
+    unchanged events aren't re-scored. Returns newly-scored count. Best-effort — clusters
     still work (heat=0 → falls back to source_count sort) if gpt-5.5 is down."""
     from . import translate
     with db.get_db() as conn:
@@ -177,7 +208,7 @@ async def score_clusters() -> int:
     cached, need = {}, []
     with db.get_db() as conn:
         for r in rows:
-            hit = db.get_meta(conn, _score_key(r["top_title"]))
+            hit = db.get_meta(conn, _score_key(r["id"]))
             try:
                 cached[r["id"]] = json.loads(hit) if hit else None
             except json.JSONDecodeError:
@@ -195,7 +226,7 @@ async def score_clusters() -> int:
     with db.get_db() as conn:   # single write block: cache fresh + apply all scores
         for r in need:
             if r["id"] in fresh:
-                db.set_meta(conn, _score_key(r["top_title"]),
+                db.set_meta(conn, _score_key(r["id"]),
                             json.dumps(fresh[r["id"]], ensure_ascii=False))
         for r in rows:
             s = cached.get(r["id"]) or fresh.get(r["id"])

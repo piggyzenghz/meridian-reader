@@ -1010,8 +1010,8 @@ async def list_clusters() -> dict[str, Any]:
             "SELECT id, top_title, title_zh, heat, member_count, source_count, "
             "first_seen, last_seen FROM clusters "
             "ORDER BY heat DESC, source_count DESC, last_seen DESC LIMIT 60")]
-        refreshed = conn.execute("SELECT MAX(created_at) r FROM clusters").fetchone()["r"]
-    return {"clusters": rows, "refreshed_at": refreshed or 0,
+        refreshed = int(db.get_meta(conn, "clusters_refreshed", "0"))
+    return {"clusters": rows, "refreshed_at": refreshed,
             "window_days": cluster.RECENT_DAYS}
 
 
@@ -1033,22 +1033,30 @@ async def cluster_summary(cluster_id: int) -> Any:
     """gpt-5.5 event synthesis (overview / progress / takeaway), cached by event
     title + member count so it only regenerates when the event develops."""
     with db.get_db() as conn:
-        cl = conn.execute("SELECT top_title, member_count FROM clusters WHERE id=?",
-                          (cluster_id,)).fetchone()
+        cl = conn.execute(
+            "SELECT top_title, source_count, member_count FROM clusters WHERE id=?",
+            (cluster_id,)).fetchone()
         if not cl:
             raise HTTPException(404, "cluster not found")
         members = [dict(r) for r in conn.execute(
             "SELECT a.title, a.summary, f.title AS feed_title FROM articles a "
             "JOIN feeds f ON f.id=a.feed_id WHERE a.cluster_id=? ORDER BY a.published",
             (cluster_id,))]
-        key = "csum:" + hashlib.sha1(cl["top_title"].encode()).hexdigest()[:16]
+        # keyed on the STABLE cluster id (survives reclustering via ckey UPSERT).
+        # Same big-change invalidation as /analysis: regenerate only when a new
+        # outlet joins or reports jump >=50% (or +4), not on every +1 article —
+        # the old `n == member_count` re-billed gpt-5.5 on the most active events.
+        key = f"csum:{cluster_id}"
         cached = db.get_meta(conn, key)
     if cached:
         try:
             obj = json.loads(cached)
-            if obj.get("n") == cl["member_count"]:
+            sc, mc = obj.get("sc", 0), obj.get("mc", 0)
+            src_grew = cl["source_count"] > sc
+            mem_jump = cl["member_count"] - mc >= max(4, mc // 2)
+            if isinstance(obj.get("s"), dict) and not src_grew and not mem_jump:
                 return {"summary": obj["s"], "cached": True}
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, AttributeError):
             pass
     try:
         s = await translate.summarize_cluster(cl["top_title"], members,
@@ -1056,8 +1064,9 @@ async def cluster_summary(cluster_id: int) -> Any:
     except Exception as exc:
         return _translate_error(exc)
     with db.get_db() as conn:
-        db.set_meta(conn, key, json.dumps({"s": s, "n": cl["member_count"]},
-                                          ensure_ascii=False))
+        db.set_meta(conn, key, json.dumps(
+            {"s": s, "sc": cl["source_count"], "mc": cl["member_count"]},
+            ensure_ascii=False))
     return {"summary": s, "cached": False}
 
 

@@ -192,6 +192,24 @@ async def summarize(title: str, text: str, engine: str = "deepseek") -> dict[str
             "points": [str(p) for p in parsed.get("points", [])][:5]}
 
 
+def _balance_by_source(members: list[dict[str, Any]], cap: int) -> list[dict[str, Any]]:
+    """Round-robin across feeds before truncating, so one prolific outlet (e.g.
+    Yahoo/Teortaxes) can't fill the whole LLM sample and bias the synthesis —
+    the 'neutral across outlets' promise needs a balanced sample, not the first N."""
+    by_src: dict[Any, list] = {}   # dict is insertion-ordered (3.7+)
+    for m in members:
+        by_src.setdefault(m.get("feed_title") or "", []).append(m)
+    out: list[dict[str, Any]] = []
+    queues = list(by_src.values())
+    while len(out) < cap and any(queues):
+        for q in queues:
+            if q:
+                out.append(q.pop(0))
+                if len(out) >= cap:
+                    break
+    return out
+
+
 async def summarize_cluster(top_title: str, members: list[dict[str, Any]],
                             engine: str = "gpt55") -> dict[str, Any]:
     """Event synthesis across a cluster's multi-source reports — overview /
@@ -199,7 +217,7 @@ async def summarize_cluster(top_title: str, members: list[dict[str, Any]],
     if not members:
         raise TranslateError("cluster has no members")
     lines = [f"[{m['feed_title']}] {m['title']} — {(m.get('summary') or '')[:120]}"
-             for m in members[:30]]
+             for m in _balance_by_source(members, 30)]
     content = await _chat(
         [
             {"role": "system", "content": (
@@ -228,7 +246,7 @@ async def analyze_cluster(top_title: str, members: list[dict[str, Any]],
     if not members:
         raise TranslateError("cluster has no members")
     lines = [f"[{m['feed_title']}] {m['title']} — {(m.get('summary') or '')[:160]}"
-             for m in members[:40]]
+             for m in _balance_by_source(members, 40)]
     content = await _chat(
         [
             {"role": "system", "content": (
