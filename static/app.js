@@ -651,6 +651,21 @@ function evBack(to) {
   else ev3.classList.remove("has-cluster", "has-article");
 }
 
+// mini monthly trend sparkline (SVG); colored up/down via the row's class (currentColor)
+function sparkline(vals) {
+  if (!Array.isArray(vals) || vals.length < 2) return "";
+  const w = 50, h = 22, pad = 2.5, n = vals.length;
+  const min = Math.min(...vals), max = Math.max(...vals), rng = (max - min) || 1;
+  const pts = vals.map((v, i) => {
+    const x = pad + (i / (n - 1)) * (w - 2 * pad);
+    const y = pad + (1 - (v - min) / rng) * (h - 2 * pad);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">`
+    + `<path class="area" d="M${pad},${h - pad} L${pts.join(" L")} L${(w - pad).toFixed(1)},${h - pad} Z"/>`
+    + `<path class="line" d="M${pts.join(" L")}"/></svg>`;
+}
+
 async function loadMarkets() {
   const el = $("#digest-market");
   if (!el) return;
@@ -665,8 +680,8 @@ async function loadMarkets() {
         const pct = esc(Math.abs(Number(m.change_pct)).toFixed(2));
         return `<div class="market-row ${up ? "up" : "down"}">
           <span class="market-name">${esc(m.name)}</span>
-          <span class="market-price">${price}</span>
-          <span class="market-chg">${up ? "▲" : "▼"} ${pct}%</span>
+          <span class="market-val"><span class="market-price">${price}</span><span class="market-chg">${up ? "▲" : "▼"} ${pct}%</span></span>
+          ${sparkline(m.spark)}
         </div>`;
       }).join("") +
       `<div class="market-foot">Yahoo Finance · ${time} 更新</div>`;
