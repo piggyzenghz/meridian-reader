@@ -1063,24 +1063,34 @@ async def cluster_summary(cluster_id: int) -> Any:
 
 @app.get("/api/cluster/{cluster_id}/analysis", dependencies=[protected])
 async def cluster_analysis(cluster_id: int) -> Any:
-    """gpt-5.5 deep event analysis (panorama / timeline / perspectives / impact /
-    controversy / outlook / facts), cached by event title + member count."""
+    """gpt-5.5 deep event analysis. Cached under a STABLE event identity (the
+    Chinese title, which survives reclustering). Only regenerated on a BIG change
+    — a new source joins, or the report count grows by >=1/3 — so routine +1
+    article churn reuses the cached analysis instead of re-billing gpt-5.5."""
     with db.get_db() as conn:
-        cl = conn.execute("SELECT top_title, member_count FROM clusters WHERE id=?",
-                          (cluster_id,)).fetchone()
+        cl = conn.execute(
+            "SELECT top_title, title_zh, source_count, member_count, first_seen "
+            "FROM clusters WHERE id=?", (cluster_id,)).fetchone()
         if not cl:
             raise HTTPException(404, "cluster not found")
         members = [dict(r) for r in conn.execute(
             "SELECT a.title, a.summary, f.title AS feed_title FROM articles a "
             "JOIN feeds f ON f.id=a.feed_id WHERE a.cluster_id=? ORDER BY a.published",
             (cluster_id,))]
-        key = "canalysis:" + hashlib.sha1(
-            f"{cl['top_title']}|{cl['member_count']}".encode()).hexdigest()[:16]
+        # stable across reclustering; first_seen disambiguates same-title events
+        # from different periods so they don't collide on one cache entry
+        ident = f"{cl['title_zh'] or cl['top_title']}|{cl['first_seen']}"
+        key = "canalysis:" + hashlib.sha1(ident.encode()).hexdigest()[:16]
         cached = db.get_meta(conn, key)
     if cached:
         try:
-            return {"analysis": json.loads(cached), "cached": True}
-        except json.JSONDecodeError:
+            c = json.loads(cached)
+            sc, mc = c.get("sc", 0), c.get("mc", 0)
+            src_grew = cl["source_count"] > sc                    # a new outlet joined
+            mem_jump = cl["member_count"] - mc >= max(4, mc // 2)  # +50% (or +4) reports
+            if isinstance(c.get("a"), dict) and not src_grew and not mem_jump:
+                return {"analysis": c["a"], "cached": True}
+        except (json.JSONDecodeError, AttributeError):
             pass
     try:
         a = await translate.analyze_cluster(cl["top_title"], members,
@@ -1088,7 +1098,9 @@ async def cluster_analysis(cluster_id: int) -> Any:
     except Exception as exc:
         return _translate_error(exc)
     with db.get_db() as conn:
-        db.set_meta(conn, key, json.dumps(a, ensure_ascii=False))
+        db.set_meta(conn, key, json.dumps(
+            {"a": a, "sc": cl["source_count"], "mc": cl["member_count"]},
+            ensure_ascii=False))
     return {"analysis": a, "cached": False}
 
 
