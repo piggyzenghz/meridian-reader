@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, cluster, config, db, digest, discover, extract, favicon,
+from . import (auth, bias, cluster, config, db, digest, discover, extract, favicon,
                fetcher, market, tagger, translate)
 from .sanitize import merge_lost_images, needs_translation, split_blocks, strip_tags
 
@@ -179,6 +179,8 @@ async def state() -> dict[str, Any]:
         "digest_ready": digest.get_cached(digest.today_key()) is not None,
         "categories": config.CATEGORIES,
         "category_labels": config.CATEGORY_LABELS,
+        "bias_labels": {"lean": config.LEAN_LABELS, "order": list(config.LEAN_ORDER),
+                        "factuality": config.FACTUALITY_LABELS},
         "feeds": feeds,
         "unread": unread_by_cat,
         "starred": starred,
@@ -305,6 +307,22 @@ async def list_articles(
                 by_id.setdefault(r["article_id"], []).append(r["tag"])
         for it in items:
             it["tags"] = by_id.get(it["id"], [])
+        # bias bar for the page's multi-source event cards (one batched query)
+        cids = [it["cluster"]["id"] for it in items if it.get("cluster")]
+        if cids:
+            cph = ",".join("?" * len(cids))
+            with db.get_db() as conn:
+                leans_by_cluster: dict[int, list[str]] = {}
+                for br in conn.execute(
+                    f"SELECT a.cluster_id AS cid, COALESCE(sb.lean,'unknown') AS lean "
+                    f"FROM articles a LEFT JOIN source_bias sb ON sb.feed_id=a.feed_id "
+                    f"WHERE a.cluster_id IN ({cph}) GROUP BY a.cluster_id, a.feed_id",
+                    tuple(cids)).fetchall():
+                    leans_by_cluster.setdefault(br["cid"], []).append(br["lean"])
+            for it in items:
+                if it.get("cluster"):
+                    it["cluster"]["bias"] = bias.compute_distribution(
+                        leans_by_cluster.get(it["cluster"]["id"], []))
     last = items[-1] if items and has_more else None
     return {"items": items,
             "next_before": last["published"] if last else 0,
@@ -1158,6 +1176,18 @@ async def list_clusters() -> dict[str, Any]:
             "FROM clusters c "
             "ORDER BY c.heat DESC, c.source_count DESC, c.last_seen DESC LIMIT 60", (cutoff,))]
         refreshed = int(db.get_meta(conn, "clusters_refreshed", "0"))
+        if rows:   # one batched query for all clusters' per-source lean (no N+1)
+            ids = [r["id"] for r in rows]
+            ph = ",".join("?" * len(ids))
+            leans_by_cluster: dict[int, list[str]] = {}
+            for br in conn.execute(
+                f"SELECT a.cluster_id AS cid, COALESCE(sb.lean,'unknown') AS lean "
+                f"FROM articles a LEFT JOIN source_bias sb ON sb.feed_id=a.feed_id "
+                f"WHERE a.cluster_id IN ({ph}) GROUP BY a.cluster_id, a.feed_id",
+                tuple(ids)).fetchall():
+                leans_by_cluster.setdefault(br["cid"], []).append(br["lean"])
+            for r in rows:
+                r["bias"] = bias.compute_distribution(leans_by_cluster.get(r["id"], []))
     return {"clusters": rows, "refreshed_at": refreshed,
             "window_days": cluster.RECENT_DAYS}
 

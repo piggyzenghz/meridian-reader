@@ -115,6 +115,18 @@ CREATE TABLE IF NOT EXISTS cluster_heat_history (
     member_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_heathist ON cluster_heat_history(cluster_id, ts);
+
+-- per-source bias profile (Ground News style, China-reader frame): lean leaning,
+-- factuality, source type. Drives the Events bias bar + Blindspot. Static data —
+-- seeded for international outlets, gpt-5.5-drafted for the rest, boss-editable.
+CREATE TABLE IF NOT EXISTS source_bias (
+    feed_id INTEGER PRIMARY KEY REFERENCES feeds(id) ON DELETE CASCADE,
+    lean TEXT NOT NULL DEFAULT 'unknown',         -- overseas|market|official|independent|unknown
+    factuality TEXT NOT NULL DEFAULT 'unknown',   -- high|mixed|low|unknown
+    note TEXT NOT NULL DEFAULT '',
+    draft INTEGER NOT NULL DEFAULT 1,             -- 1=AI/seed draft, 0=boss-confirmed
+    updated_at INTEGER NOT NULL DEFAULT 0
+);
 """
 
 

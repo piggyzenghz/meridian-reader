@@ -748,6 +748,18 @@ svg { display: block; }
 .ev-sig-label b { color: var(--accent); font-variant-numeric: tabular-nums; }
 #ev-sig-range { flex: 1; min-width: 0; accent-color: var(--accent); }
 .ev-stat { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
+/* Bias bar — source-lean distribution (Ground News style). Reuses the
+   theme-aware category vars so it adapts to light/dark with no new variables. */
+.bias-wrap { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.bias-bar { display: flex; height: 5px; min-width: 56px; flex: 0 1 120px; border-radius: 3px; overflow: hidden; background: var(--surface-2); }
+.bias-seg { transition: flex .3s; min-width: 2px; }
+.bias-seg[data-lean="official"] { background: var(--c-cn); }
+.bias-seg[data-lean="market"] { background: var(--c-markets); }
+.bias-seg[data-lean="overseas"] { background: var(--c-world); }
+.bias-seg[data-lean="independent"] { background: var(--c-tech); }
+.bias-seg[data-lean="unknown"] { background: var(--text-3); opacity: .4; }
+.bias-blind { font-size: 9px; font-weight: 800; padding: 1px 5px; border-radius: 5px; color: var(--accent-ink); background: var(--danger); }
+.bias-cover { font-size: 10px; color: var(--text-3); }
 .ev-item-title { font-size: 13.5px; line-height: 1.45; color: var(--text); font-weight: 550; }
 .ev-item-title-en { font-size: 11px; line-height: 1.4; color: var(--text-3); }
 .ev-event-title { font-family: var(--font-text); font-size: 17px; font-weight: 650; line-height: 1.4; margin-bottom: 14px; text-wrap: pretty; }

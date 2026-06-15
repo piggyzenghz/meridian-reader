@@ -482,13 +482,27 @@ window.__retryDigest = () => renderDigestView(true);
 /* ── story clusters (events): 3-column event desk ── */
 const EV = { clusterId: null, articleId: null, blocks: null, article: null, clusters: [], minSig: 0 };
 
+// source-lean distribution bar (Ground News style). Colors come ONLY from
+// style.css via data-lean (zero hardcoded color); labels from the backend.
+function biasBarHtml(b, opts = {}) {
+  if (!b || !b.total) return "";
+  const labels = (S.state && S.state.bias_labels && S.state.bias_labels.lean) || {};
+  const segs = b.dist.map((d) =>
+    `<span class="bias-seg" data-lean="${d.lean}" style="flex:${d.count}" title="${esc(labels[d.lean] || d.lean)} ${d.count} 家"></span>`).join("");
+  const blind = (b.blindspot && b.blindspot.length)
+    ? `<span class="bias-blind">缺${b.blindspot.map(esc).join("·")}</span>` : "";
+  const cover = opts.cover ? `<span class="bias-cover">${b.sources}/${b.total} 家立场已知</span>` : "";
+  return `<span class="bias-wrap"><span class="bias-bar" title="多源立场分布">${segs}</span>${blind}${cover}</span>`;
+}
+
 // one cluster row in the Events left column
 function evItemHtml(c) {
   const sig = c.significance ? `<span class="ev-item-sig" title="重要性">◆ ${c.significance}</span>` : "";
   return `<button class="ev-item" data-cluster="${c.id}" data-title="${esc(c.title_zh || c.top_title)}">
     <span class="ev-item-badge">${eventBadge(c)}${c.heat ? `<span class="ev-item-heat">🔥 ${c.heat}${heatTrend(c)}</span>` : ""}${sig}<span>◈ ${c.source_count} 家 · ${c.member_count} 篇</span></span>
     <span class="ev-item-title">${esc(c.title_zh || c.top_title)}</span>
-    ${c.title_zh ? `<span class="ev-item-title-en">${esc(c.top_title)}</span>` : ""}</button>`;
+    ${c.title_zh ? `<span class="ev-item-title-en">${esc(c.top_title)}</span>` : ""}
+    ${biasBarHtml(c.bias)}</button>`;
 }
 
 // re-render the left list filtered by the significance slider (no refetch)
@@ -930,6 +944,7 @@ function eventCardHtml(lead, members, i) {
           <button class="ec-deep" type="button">深度分析 ↗</button>
         </div>
         <h3 class="ec-title">${title}</h3>
+        ${biasBarHtml(c.bias)}
       </div>
       <span class="ec-caret" aria-hidden="true">▾</span>
     </div>

@@ -69,6 +69,13 @@ USER_AGENT = (
 SESSION_COOKIE = "meridian_session"
 SESSION_TTL = 60 * 60 * 24 * 30  # 30 days
 
+# Source-bias (Events bias bar). China-reader frame, not the US left/right axis:
+# 海外 vs 国内市场化 vs 官媒 vs 独立个人. Order = bias-bar segment order.
+LEAN_ORDER = ("official", "market", "overseas", "independent")
+LEAN_LABELS = {"official": "官媒", "market": "市场化", "overseas": "海外",
+               "independent": "独立", "unknown": "未知"}
+FACTUALITY_LABELS = {"high": "高", "mixed": "中", "low": "低", "unknown": "未知"}
+
 CATEGORIES = ["markets", "world", "tech", "ai", "x", "cn"]
 CATEGORY_LABELS = {
     "markets": "Markets · 财经",

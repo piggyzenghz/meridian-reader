@@ -345,6 +345,58 @@ async def score_clusters_ai(events: list[dict[str, Any]],
     return out
 
 
+async def draft_source_bias(sources: list[dict[str, Any]],
+                            engine: str = "gpt55") -> list[dict[str, Any]]:
+    """Batch-draft a bias profile per news source (judgement → model). sources:
+    [{i, title, site_url, category}]. Returns [{i, lean, factuality, note}] with
+    lean/factuality whitelisted (illegal values dropped, caller falls to unknown)."""
+    if not sources:
+        return []
+    leans = "overseas(海外媒体)/market(国内市场化商业媒体)/official(官方媒体)/independent(独立个人或博客)"
+    sys_prompt = (
+        "你是媒体研究员。下面是一批新闻源,为每个判断三项："
+        f"① lean 媒体属性,从固定枚举选一:{leans};"
+        "② factuality 事实性 high/mixed/low;③ note 一句中文说明(≤20字)。"
+        "中国大陆官媒选 official,西方主流媒体选 overseas,国内商业科技媒体选 market,"
+        "个人 X 账号/博客选 independent。"
+        '只输出 JSON：{"sources":[{"i":序号整数,"lean":"枚举","factuality":"枚举","note":"说明"}]}。'
+    )
+    _LEANS = {"overseas", "market", "official", "independent"}
+    _FACT = {"high", "mixed", "low"}
+    out: list[dict[str, Any]] = []
+    batch = 30
+    for start in range(0, len(sources), batch):
+        chunk = sources[start:start + batch]
+        lines = [f"{j}. {s['title']} [{s.get('category','')}] {s.get('site_url','')}"
+                 for j, s in enumerate(chunk)]
+        content = await _chat(
+            [{"role": "system", "content": sys_prompt},
+             {"role": "user", "content": "源列表：\n" + "\n".join(lines)}],
+            max_tokens=2600, json_mode=True, engine=engine)
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        for it in (parsed.get("sources") or []):
+            if not isinstance(it, dict):
+                continue
+            try:
+                local_i = int(it.get("i"))
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= local_i < len(chunk):
+                continue
+            lean = str(it.get("lean", "")).strip()
+            fact = str(it.get("factuality", "")).strip()
+            out.append({"i": local_i + start,
+                        "lean": lean if lean in _LEANS else "unknown",
+                        "factuality": fact if fact in _FACT else "unknown",
+                        "note": str(it.get("note", ""))[:60]})
+    return out
+
+
 async def ask_article(title: str, content: str, question: str,
                       engine: str = "gpt55") -> str:
     """Answer a user's question grounded in one article's text (interactive深读)."""
