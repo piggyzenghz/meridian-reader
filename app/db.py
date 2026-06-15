@@ -162,6 +162,12 @@ COLUMN_MIGRATIONS = [
     # a fresh id every cycle (which 404'd users who had drilled into an old id).
     "ALTER TABLE clusters ADD COLUMN ckey TEXT NOT NULL DEFAULT ''",
     "CREATE INDEX IF NOT EXISTS idx_clusters_ckey ON clusters(ckey)",
+    # adaptive per-feed fetch scheduling: own next_fetch (epoch) + measured
+    # publish cadence (avg_gap secs) + a coarse tier label for the UI.
+    "ALTER TABLE feeds ADD COLUMN next_fetch INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE feeds ADD COLUMN avg_gap INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE feeds ADD COLUMN fetch_tier TEXT NOT NULL DEFAULT 'normal'",
+    "CREATE INDEX IF NOT EXISTS idx_feeds_next_fetch ON feeds(enabled, next_fetch)",
 ]
 
 

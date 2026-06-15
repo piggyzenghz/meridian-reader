@@ -46,6 +46,21 @@ FETCH_TIMEOUT = 25.0
 KEEP_DAYS = 90               # prune articles older than this (starred kept)
 MAX_PER_FEED = 400           # cap stored articles per feed (starred kept)
 
+# --- Adaptive per-feed fetch scheduling -----------------------------------
+# Instead of refreshing every feed on one global FETCH_INTERVAL_MIN clock, each
+# feed gets its own next_fetch derived (by code, not a model) from how often it
+# actually publishes + an exponential backoff on errors. The loop wakes every
+# SCHEDULER_TICK_MIN and only fetches feeds whose next_fetch is due. Set
+# MERIDIAN_ADAPTIVE_FETCH=0 to fall back to the old global-clock behaviour.
+ADAPTIVE_FETCH = os.environ.get("MERIDIAN_ADAPTIVE_FETCH", "1") not in ("0", "false", "False")
+SCHEDULER_TICK_MIN = int(os.environ.get("MERIDIAN_SCHEDULER_TICK_MIN", "2"))  # loop wake-up / min interval granularity
+ADAPTIVE_MIN_MIN = int(os.environ.get("MERIDIAN_ADAPTIVE_MIN_MIN", "5"))      # floor for active feeds
+ADAPTIVE_MAX_MIN = int(os.environ.get("MERIDIAN_ADAPTIVE_MAX_MIN", "240"))    # ceiling for normal feeds (4h)
+ADAPTIVE_SLOW_MAX_MIN = int(os.environ.get("MERIDIAN_ADAPTIVE_SLOW_MAX_MIN", "720"))  # always_keep / slow feeds (12h)
+ERROR_BACKOFF_BASE_MIN = int(os.environ.get("MERIDIAN_ERROR_BACKOFF_BASE_MIN", "15"))
+ERROR_BACKOFF_CAP_MIN = int(os.environ.get("MERIDIAN_ERROR_BACKOFF_CAP_MIN", "720"))
+GAP_SAMPLE_N = 12            # recent articles sampled to estimate a feed's publish cadence
+
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 MeridianReader/1.0"

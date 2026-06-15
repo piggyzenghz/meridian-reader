@@ -116,6 +116,7 @@ async def state() -> dict[str, Any]:
         feeds = [_public_feed(dict(row)) for row in conn.execute(
             """SELECT f.id, f.url, f.title, f.category, f.site_url, f.enabled,
                       f.last_fetched, f.last_error, f.error_count,
+                      f.next_fetch, f.avg_gap, f.fetch_tier,
                       COALESCE(u.unread,0) AS unread
                FROM feeds f LEFT JOIN (
                    SELECT feed_id, COUNT(*) AS unread FROM articles
@@ -955,7 +956,7 @@ async def delete_feed(feed_id: int) -> dict[str, Any]:
 async def manual_refresh() -> dict[str, Any]:
     if fetcher.is_refreshing():
         return {"started": False, "running": True}
-    asyncio.create_task(fetcher.refresh_all())
+    asyncio.create_task(fetcher.refresh_all(force=True))  # manual = fetch all, bypass schedule
     return {"started": True, "running": True}
 
 

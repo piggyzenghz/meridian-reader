@@ -127,6 +127,43 @@ def _polish_rss_body(html: str) -> str:
     return html.strip()
 
 
+def _recompute_gap(conn: sqlite3.Connection, feed_id: int) -> int:
+    """Estimate a feed's publish cadence = median gap (secs) between its recent
+    articles' publish times. Median (not mean) resists a burst skewing it. 0 =
+    too few samples to know."""
+    rows = conn.execute(
+        "SELECT published FROM articles WHERE feed_id=? AND published>0"
+        " ORDER BY published DESC LIMIT ?", (feed_id, config.GAP_SAMPLE_N + 1),
+    ).fetchall()
+    pubs = [r["published"] for r in rows]
+    if len(pubs) < 2:
+        return 0
+    diffs = sorted(pubs[i] - pubs[i + 1] for i in range(len(pubs) - 1))
+    mid = len(diffs) // 2
+    median = diffs[mid] if len(diffs) % 2 else (diffs[mid - 1] + diffs[mid]) // 2
+    return max(0, int(median))
+
+
+def _next_fetch(gap_sec: int, always_keep: bool, now: int, inserted: int,
+                errored: bool, error_count: int) -> tuple[int, str]:
+    """Pure scheduler: when to fetch this feed next + a coarse tier label.
+    Errored feeds back off exponentially; otherwise the interval tracks the
+    feed's publish cadence (check ~twice per publish gap), nudged by whether the
+    last fetch brought anything new, then clamped to [MIN, cap]."""
+    if errored:
+        backoff = min(config.ERROR_BACKOFF_CAP_MIN,
+                      config.ERROR_BACKOFF_BASE_MIN * (2 ** min(error_count, 6)))
+        return now + backoff * 60, "slow"
+    if not config.ADAPTIVE_FETCH:
+        return now + config.FETCH_INTERVAL_MIN * 60, "normal"
+    interval = gap_sec / 120 if gap_sec > 0 else config.FETCH_INTERVAL_MIN  # min = gap/60/2
+    interval *= 0.7 if inserted > 0 else 1.4   # seen something → tighten, quiet → loosen
+    cap = config.ADAPTIVE_SLOW_MAX_MIN if always_keep else config.ADAPTIVE_MAX_MIN
+    interval = max(config.ADAPTIVE_MIN_MIN, min(cap, interval))
+    tier = "fast" if interval <= 15 else "normal" if interval <= 90 else "slow"
+    return now + int(interval * 60), tier
+
+
 def parse_and_store(feed_id: int, body: bytes, conn: sqlite3.Connection) -> int:
     """Parse a feed payload and insert new articles. Returns inserted count."""
     parsed = feedparser.parse(body)
@@ -197,11 +234,15 @@ async def fetch_one(client: httpx.AsyncClient, feed: sqlite3.Row) -> int:
                 if resp.status_code in (301, 302, 303, 307, 308) and loc:
                     url = str(resp.url.join(loc))
                     continue
-                if resp.status_code == 304:
+                if resp.status_code == 304:   # confirmed no new content (not a cold feed)
                     with db.get_db() as conn:
+                        gap = _recompute_gap(conn, feed["id"])
+                        nf, tier = _next_fetch(gap, bool(feed["always_keep"]), now,
+                                               inserted=0, errored=False, error_count=0)
                         conn.execute(
-                            "UPDATE feeds SET last_fetched=?, last_error='',"
-                            " error_count=0 WHERE id=?", (now, feed["id"]),
+                            "UPDATE feeds SET last_fetched=?, last_error='', error_count=0,"
+                            " avg_gap=?, next_fetch=?, fetch_tier=? WHERE id=?",
+                            (now, gap, nf, tier, feed["id"]),
                         )
                     return 0
                 resp.raise_for_status()
@@ -219,22 +260,28 @@ async def fetch_one(client: httpx.AsyncClient, feed: sqlite3.Row) -> int:
     except Exception as exc:
         message = _scrub_url(f"{type(exc).__name__}: {exc}")[:300]
         log.warning("fetch failed %s: %s", _scrub_url(feed["url"]), message)
+        nf, tier = _next_fetch(0, bool(feed["always_keep"]), now, inserted=0,
+                               errored=True, error_count=(feed["error_count"] or 0) + 1)
         with db.get_db() as conn:
             conn.execute(
                 "UPDATE feeds SET last_fetched=?, last_error=?,"
-                " error_count=error_count+1 WHERE id=?",
-                (now, message, feed["id"]),
+                " error_count=error_count+1, next_fetch=?, fetch_tier=? WHERE id=?",
+                (now, message, nf, tier, feed["id"]),
             )
         return 0
 
     def _store() -> int:
         with db.get_db() as conn:
             count = parse_and_store(feed["id"], body, conn)
+            gap = _recompute_gap(conn, feed["id"])
+            nf, tier = _next_fetch(gap, bool(feed["always_keep"]), now,
+                                   inserted=count, errored=False, error_count=0)
             conn.execute(
                 "UPDATE feeds SET last_fetched=?, etag=?, last_modified=?,"
-                " last_error='', error_count=0 WHERE id=?",
+                " last_error='', error_count=0, avg_gap=?, next_fetch=?, fetch_tier=?"
+                " WHERE id=?",
                 (now, resp.headers.get("etag", ""),
-                 resp.headers.get("last-modified", ""), feed["id"]),
+                 resp.headers.get("last-modified", ""), gap, nf, tier, feed["id"]),
             )
             return count
 
@@ -243,26 +290,36 @@ async def fetch_one(client: httpx.AsyncClient, feed: sqlite3.Row) -> int:
     except Exception as exc:
         message = _scrub_url(f"{type(exc).__name__}: {exc}")[:300]
         log.warning("parse failed %s: %s", _scrub_url(feed["url"]), message)
+        nf, tier = _next_fetch(0, bool(feed["always_keep"]), now, inserted=0,
+                               errored=True, error_count=(feed["error_count"] or 0) + 1)
         with db.get_db() as conn:
             conn.execute(
                 "UPDATE feeds SET last_fetched=?, last_error=?,"
-                " error_count=error_count+1 WHERE id=?",
-                (now, message, feed["id"]),
+                " error_count=error_count+1, next_fetch=?, fetch_tier=? WHERE id=?",
+                (now, message, nf, tier, feed["id"]),
             )
         return 0
 
 
-async def refresh_all() -> int:
-    """Fetch every enabled feed concurrently. Returns total new articles."""
+async def refresh_all(force: bool = False) -> int:
+    """Fetch due feeds concurrently. Returns total new articles. With adaptive
+    scheduling on (and not force), only feeds whose next_fetch is due are
+    fetched; force=True (manual refresh / adaptive off) fetches every feed."""
     if _refresh_lock.locked():
         return 0
     async with _refresh_lock:
         refresh_state["running"] = True
         try:
+            now = int(time.time())
             with db.get_db() as conn:
-                feeds = conn.execute(
-                    "SELECT * FROM feeds WHERE enabled=1"
-                ).fetchall()
+                if config.ADAPTIVE_FETCH and not force:
+                    feeds = conn.execute(
+                        "SELECT * FROM feeds WHERE enabled=1 AND next_fetch<=?", (now,)
+                    ).fetchall()
+                else:
+                    feeds = conn.execute("SELECT * FROM feeds WHERE enabled=1").fetchall()
+            if not feeds:   # nothing due this tick — skip prune/refresh bookkeeping
+                return 0
             semaphore = asyncio.Semaphore(config.FETCH_CONCURRENCY)
             async with httpx.AsyncClient(
                 timeout=config.FETCH_TIMEOUT,
@@ -291,24 +348,34 @@ async def refresh_all() -> int:
 
 
 async def refresh_loop() -> None:
-    """Background task started from app lifespan."""
+    """Background task started from app lifespan. With adaptive scheduling the
+    loop wakes every SCHEDULER_TICK_MIN to fetch only due feeds, but the heavy
+    post-processing (tag / digest / cluster) runs only when new articles arrived
+    or at most once per FETCH_INTERVAL_MIN — so a 2-min fetch tick doesn't
+    re-embed/re-cluster the whole window every two minutes."""
     from . import cluster, digest, tagger  # late import to avoid a cycle
     await asyncio.sleep(2)
+    last_heavy = 0.0
     while True:
+        total = 0
         try:
-            await refresh_all()
+            total = await refresh_all()
         except Exception:
             log.exception("refresh loop iteration failed")
-        try:
-            await tagger.run_once()  # auto-tag newly fetched articles
-        except Exception:
-            log.exception("tagger failed")
-        try:
-            await digest.ensure_today()
-        except Exception:
-            log.exception("digest check failed")
-        try:
-            await cluster.run_once()  # embed new articles + rebuild story clusters
-        except Exception:
-            log.exception("clustering failed")
-        await asyncio.sleep(config.FETCH_INTERVAL_MIN * 60)
+        now = time.time()
+        if total > 0 or (now - last_heavy) >= config.FETCH_INTERVAL_MIN * 60:
+            last_heavy = now
+            try:
+                await tagger.run_once()  # auto-tag newly fetched articles
+            except Exception:
+                log.exception("tagger failed")
+            try:
+                await digest.ensure_today()
+            except Exception:
+                log.exception("digest check failed")
+            try:
+                await cluster.run_once()  # embed new articles + rebuild story clusters
+            except Exception:
+                log.exception("clustering failed")
+        tick = config.SCHEDULER_TICK_MIN if config.ADAPTIVE_FETCH else config.FETCH_INTERVAL_MIN
+        await asyncio.sleep(tick * 60)

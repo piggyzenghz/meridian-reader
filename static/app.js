@@ -110,6 +110,23 @@ const fmtTime = (ts) => {
   return d.toLocaleDateString("zh-CN", { timeZone: TZ, month: "short", day: "numeric" }) + " " + clock;
 };
 
+// adaptive-fetch display helpers (zero hardcoded color; all text Chinese)
+const TIER_LABEL = { fast: "活跃源", normal: "常规", slow: "慢源/退避" };
+function fmtGap(sec) {
+  if (!sec || sec <= 0) return "未知";
+  const m = sec / 60;
+  if (m < 90) return `约 ${Math.round(m)} 分钟`;
+  const h = m / 60;
+  return h < 48 ? `约 ${Math.round(h)} 小时` : `约 ${Math.round(h / 24)} 天`;
+}
+function fmtNext(epoch) {
+  if (!epoch) return "—";
+  const m = (epoch * 1000 - Date.now()) / 60000;
+  if (m <= 1) return "已到点";
+  if (m < 90) return `约 ${Math.round(m)} 分钟后`;
+  return `约 ${Math.round(m / 60)} 小时后`;
+}
+
 function groupKey(ts) {
   const d = new Date(ts * 1000), today = new Date();
   const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
@@ -1943,6 +1960,7 @@ function renderFeedList() {
           <div class="feed-row-title">${esc(f.title || "(未命名)")}</div>
           <div class="feed-row-url">${esc(f.url)}</div>
           ${f.error_count > 0 ? `<div class="feed-row-err">⚠ 连续失败 ${f.error_count} 次${f.last_error ? `：${esc(f.last_error.slice(0, 80))}` : ""}</div>` : ""}
+          ${f.fetch_tier ? `<div class="feed-row-rhythm">${TIER_LABEL[f.fetch_tier] || f.fetch_tier} · 更新${fmtGap(f.avg_gap)} · 下次${fmtNext(f.next_fetch)}</div>` : ""}
         </div>
         <button class="icon-btn sm" data-act="del" title="删除"><svg><use href="#i-trash"/></svg></button>
       </div>`).join("");
