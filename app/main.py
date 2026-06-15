@@ -260,7 +260,8 @@ async def list_articles(
         rows = conn.execute(
             f"""SELECT a.id, a.feed_id, a.link, a.title, a.title_zh, a.author,
                        a.published, a.summary, a.image, a.is_read, a.is_starred,
-                       a.read_later, a.progress, a.word_count,
+                       a.read_later, a.progress, a.word_count, a.rewritten_title,
+                       a.triage_state,
                        a.body_zh, f.title AS feed_title, f.category, a.cluster_id,
                        cl.title_zh AS cl_title_zh, cl.heat AS cl_heat,
                        cl.source_count AS cl_sources, cl.member_count AS cl_members
@@ -419,6 +420,8 @@ def _article_payload(article: dict[str, Any], extracting: bool) -> dict[str, Any
         "feed_title": article["feed_title"], "category": article["category"],
         "link": article["link"], "title": article["title"],
         "title_zh": article["title_zh"], "author": article["author"],
+        "rewritten_title": article["rewritten_title"],
+        "triage": article["triage_state"],
         "published": article["published"], "content": content,
         "has_fulltext": bool(article["content_full"]),
         "extract_tried": bool(article["extract_tried"]),
@@ -764,6 +767,29 @@ async def ask_article(article_id: int, body: AskIn) -> Any:
     return {"answer": answer}
 
 
+@app.post("/api/articles/{article_id}/rewrite-title", dependencies=[protected, ai_limited])
+async def rewrite_title(article_id: int) -> Any:
+    """gpt-5.5 rewrites a clickbait headline into a neutral, accurate one.
+    Cached: an already-rewritten article (non-empty rewritten_title) returns
+    instantly without burning another call."""
+    article = _get_article(article_id)
+    if article["rewritten_title"]:
+        return {"rewritten_title": article["rewritten_title"], "cached": True}
+    text = strip_tags(_content_of(article) or "") or (article["summary"] or "")
+    if len(text) < 80:
+        raise HTTPException(400, "article too short to rewrite title")
+    try:
+        result = await translate.rewrite_title(article["title"], text,
+                                               engine=_engine_for("summary"))
+    except Exception as exc:
+        return _translate_error(exc)
+    new_title = (result["rewritten"] or article["title"]).strip()
+    with db.get_db() as conn:
+        conn.execute("UPDATE articles SET rewritten_title=? WHERE id=?",
+                     (new_title, article_id))
+    return {"rewritten_title": new_title, "clickbait": result["clickbait"], "cached": False}
+
+
 class EngineIn(BaseModel):
     feature: str
     engine: str
@@ -1091,8 +1117,8 @@ async def list_clusters() -> dict[str, Any]:
     cutoff = int(time.time()) - 12 * 3600   # heat baseline ~12h ago → rising/cooling trend
     with db.get_db() as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT c.id, c.top_title, c.title_zh, c.heat, c.member_count, c.source_count, "
-            "c.first_seen, c.last_seen, "
+            "SELECT c.id, c.top_title, c.title_zh, c.heat, c.significance, c.member_count, "
+            "c.source_count, c.first_seen, c.last_seen, "
             "(SELECT h.heat FROM cluster_heat_history h "
             " WHERE h.cluster_id=c.id AND h.ts>=? ORDER BY h.ts ASC LIMIT 1) AS heat_prev "
             "FROM clusters c "

@@ -168,6 +168,14 @@ COLUMN_MIGRATIONS = [
     "ALTER TABLE feeds ADD COLUMN avg_gap INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE feeds ADD COLUMN fetch_tier TEXT NOT NULL DEFAULT 'normal'",
     "CREATE INDEX IF NOT EXISTS idx_feeds_next_fetch ON feeds(enabled, next_fetch)",
+    # AI clickbait rewrite: a neutral, accurate Chinese title (empty = not yet rewritten)
+    "ALTER TABLE articles ADD COLUMN rewritten_title TEXT NOT NULL DEFAULT ''",
+    # triage inbox: inbox|later|shortlist|archive (read_later kept as a derived mirror)
+    "ALTER TABLE articles ADD COLUMN triage_state TEXT NOT NULL DEFAULT 'inbox'",
+    "CREATE INDEX IF NOT EXISTS idx_articles_triage ON articles(triage_state, published DESC)",
+    # gpt-5.5 7-factor importance (News Minimalist) synthesized into significance
+    "ALTER TABLE clusters ADD COLUMN significance REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE clusters ADD COLUMN sig_factors TEXT NOT NULL DEFAULT ''",
 ]
 
 
@@ -258,6 +266,8 @@ def article_row_to_listing(row: sqlite3.Row) -> dict[str, Any]:
         "link": row["link"],
         "title": row["title"],
         "title_zh": row["title_zh"],
+        "rewritten_title": row["rewritten_title"],
+        "triage": row["triage_state"],
         "author": row["author"],
         "published": row["published"],
         "summary": row["summary"],

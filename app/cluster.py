@@ -203,6 +203,25 @@ def _score_key(cluster_id: int) -> str:
     return f"cheat:{cluster_id}"
 
 
+_SIG_FACTORS = ("scale", "impact", "novelty", "potential", "legacy", "positivity", "credibility")
+
+
+def _significance(factors: dict) -> float:
+    """News Minimalist composite: credibility × cbrt(scale × impact × potential).
+    Each factor floored to 1 so one zero doesn't annihilate a genuinely big story
+    (model occasionally emits 0). Synthesis is code, not the model (判断用模型/合成用代码)."""
+    def g(k: str) -> float:
+        v = factors.get(k)
+        if v is None:          # unscored factor → neutral 5 (not 0, which would tank it)
+            return 5.0
+        try:
+            return max(1.0, min(10.0, float(v)))   # explicit 0 → floored to 1, not annihilating
+        except (TypeError, ValueError):
+            return 5.0
+    core = g("scale") * g("impact") * g("potential")
+    return round(g("credibility") * (core ** (1 / 3)), 1)
+
+
 async def score_clusters() -> int:
     """gpt-5.5: give each surfaced cluster a Chinese title + heat score (for the
     left column's 中英对照 and heat-based sort). Cached by stable cluster id so
@@ -227,7 +246,8 @@ async def score_clusters() -> int:
                     obj = None
             # re-score when the event materially grows (new source, or report count
             # jumps) — keying on id alone would freeze heat/中文标题 as the event develops.
-            stale = obj and (r["source_count"] > obj.get("sc", 0)
+            stale = obj and ("f" not in obj   # old cache schema → re-score once to get factors
+                             or r["source_count"] > obj.get("sc", 0)
                              or r["member_count"] - obj.get("mc", 0) >= max(4, obj.get("mc", 0) // 2))
             if obj and not stale:
                 cached[r["id"]] = obj
@@ -240,7 +260,9 @@ async def score_clusters() -> int:
         for idx, r in enumerate(need):
             s = by_i.get(idx)
             if s:
+                f = s.get("factors") or {}
                 fresh[r["id"]] = {"title_zh": s["title_zh"], "heat": s["heat"],
+                                  "f": f, "sig": _significance(f),
                                   "sc": r["source_count"], "mc": r["member_count"]}
     with db.get_db() as conn:   # single write block: cache fresh + apply all scores
         for r in need:
@@ -250,8 +272,10 @@ async def score_clusters() -> int:
         for r in rows:
             s = cached.get(r["id"]) or fresh.get(r["id"])
             if s:
-                conn.execute("UPDATE clusters SET title_zh=?, heat=? WHERE id=?",
-                             (s["title_zh"], s["heat"], r["id"]))
+                conn.execute(
+                    "UPDATE clusters SET title_zh=?, heat=?, significance=?, sig_factors=? WHERE id=?",
+                    (s["title_zh"], s["heat"], s.get("sig", 0),
+                     json.dumps(s.get("f", {}), ensure_ascii=False), r["id"]))
     return len(fresh)
 
 

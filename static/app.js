@@ -475,7 +475,30 @@ async function renderDigestView(forceGen = false) {
 window.__retryDigest = () => renderDigestView(true);
 
 /* ── story clusters (events): 3-column event desk ── */
-const EV = { clusterId: null, articleId: null, blocks: null, article: null };
+const EV = { clusterId: null, articleId: null, blocks: null, article: null, clusters: [], minSig: 0 };
+
+// one cluster row in the Events left column
+function evItemHtml(c) {
+  const sig = c.significance ? `<span class="ev-item-sig" title="重要性">◆ ${c.significance}</span>` : "";
+  return `<button class="ev-item" data-cluster="${c.id}" data-title="${esc(c.title_zh || c.top_title)}">
+    <span class="ev-item-badge">${eventBadge(c)}${c.heat ? `<span class="ev-item-heat">🔥 ${c.heat}${heatTrend(c)}</span>` : ""}${sig}<span>◈ ${c.source_count} 家 · ${c.member_count} 篇</span></span>
+    <span class="ev-item-title">${esc(c.title_zh || c.top_title)}</span>
+    ${c.title_zh ? `<span class="ev-item-title-en">${esc(c.top_title)}</span>` : ""}</button>`;
+}
+
+// re-render the left list filtered by the significance slider (no refetch)
+function renderClusterList() {
+  const box = $("#ev-list-items");
+  if (!box) return;
+  const shown = EV.clusters.filter((c) => (c.significance || 0) >= EV.minSig);
+  box.innerHTML = shown.length
+    ? shown.map(evItemHtml).join("")
+    : `<div class="ev-ph">没有重要性 ≥ ${EV.minSig} 的事件<br><span style="font-size:11px">拖低滑块看更多</span></div>`;
+  const stat = $("#ev-stat");
+  if (stat) stat.textContent = `${shown.length}/${EV.clusters.length} 个事件`;
+  if (EV.clusterId)   // keep the drilled-in cluster highlighted after a re-filter
+    $$(".ev-item").forEach((b) => b.classList.toggle("active", b.dataset.cluster == EV.clusterId));
+}
 
 // reader-style body render (reused for the right column; mirrors renderReader)
 function clusterBodyHtml(a, blocks) {
@@ -534,13 +557,22 @@ async function renderClustersView() {
       ? `近 ${data.window_days || 5} 天热点 · 更新于 ${fmtTime(data.refreshed_at)}`
       : "";
     if (!data.clusters?.length) { list.innerHTML = `<div class="ev-ph">还没有聚合的事件<br><span style="font-size:11px">同一事件被 ≥2 家媒体报道时自动归并</span></div>`; return; }
-    list.innerHTML = data.clusters.map((c) => `
-      <button class="ev-item" data-cluster="${c.id}" data-title="${esc(c.title_zh || c.top_title)}">
-        <span class="ev-item-badge">${eventBadge(c)}${c.heat ? `<span class="ev-item-heat">🔥 ${c.heat}${heatTrend(c)}</span>` : ""}<span>◈ ${c.source_count} 家 · ${c.member_count} 篇</span></span>
-        <span class="ev-item-title">${esc(c.title_zh || c.top_title)}</span>
-        ${c.title_zh ? `<span class="ev-item-title-en">${esc(c.top_title)}</span>` : ""}</button>`).join("");
-    if (EV.clusterId)   // ec-deep direct entry selected a cluster before the list loaded — sync highlight
-      $$(".ev-item").forEach((b) => b.classList.toggle("active", b.dataset.cluster == EV.clusterId));
+    EV.clusters = data.clusters;
+    const hasSig = data.clusters.some((c) => c.significance > 0);
+    // significance slider only when gpt-5.5 has scored factors (graceful degrade)
+    list.innerHTML = `${hasSig ? `<div class="ev-tools" id="ev-tools">
+        <label class="ev-sig-label">重要性 ≥ <b id="ev-sig-val">0</b></label>
+        <input type="range" id="ev-sig-range" min="0" max="100" step="5" value="0">
+        <span class="ev-stat" id="ev-stat"></span>
+      </div>` : ""}<div id="ev-list-items"></div>`;
+    EV.minSig = 0;
+    renderClusterList();
+    const range = $("#ev-sig-range");
+    if (range) range.addEventListener("input", (e) => {
+      EV.minSig = +e.target.value;
+      $("#ev-sig-val").textContent = EV.minSig;
+      renderClusterList();
+    });
   } catch {
     if (S.view.mode !== "clusters") return;   // switched away mid-fetch — don't clobber the new view
     const li = $("#ev-list"); if (li) li.innerHTML = `<div class="ev-ph">加载失败</div>`;
@@ -855,7 +887,7 @@ function itemHtml(a, i) {
         ${a.read_later ? '<svg class="item-later-mini"><use href="#i-clock"/></svg>' : ""}
         ${a.is_starred ? '<svg class="item-star-mini"><use href="#i-star"/></svg>' : ""}
       </div>
-      <h3 class="item-title">${esc(isTweet ? tweetText(a) : a.title)}</h3>
+      <h3 class="item-title"${a.rewritten_title ? ` title="原标题：${esc(a.title)}"` : ""}>${esc(isTweet ? tweetText(a) : (a.rewritten_title || a.title))}</h3>
       ${zh}
       ${showSummary ? `<p class="item-summary">${esc(a.summary)}</p>` : ""}
       ${(a.tags || []).length ? `<div class="item-tags">${a.tags.slice(0, 3).map((t) =>
@@ -1212,11 +1244,13 @@ function renderReader() {
   $("#btn-translate").classList.toggle("on", !!S.currentBlocks);
 
   const catColor = CAT_VAR[a.category];
-  // Chinese-first headline when a translation exists (Margin/QMReader pattern)
-  const titleBlock = a.title_zh
-    ? `<h1 class="reader-title">${esc(a.title_zh)}</h1>
-       <div class="reader-title-en">${esc(a.title)}</div>`
-    : `<h1 class="reader-title">${esc(a.title)}</h1>`;
+  // Chinese-first headline; a de-clickbaited rewrite (if any) wins over the
+  // raw/translated title, with the original kept below for reference.
+  const headline = a.rewritten_title || a.title_zh || a.title;
+  const titleBlock = `<h1 class="reader-title">${esc(headline)}</h1>` + (
+    a.rewritten_title
+      ? `<div class="reader-title-en"><span class="rw-badge">已重写</span>原标题：${esc(a.title)}</div>`
+      : (a.title_zh ? `<div class="reader-title-en">${esc(a.title)}</div>` : ""));
   const tagChips = (a.tags || []).length
     ? `<div class="reader-tags">${a.tags.map((t) =>
         `<span class="reader-tag" data-tag="${esc(t)}">${esc(t)}</span>`).join("")}</div>` : "";
@@ -1404,6 +1438,26 @@ $("#btn-summary").addEventListener("click", async () => {
   } catch (err) {
     slot.innerHTML = "";
     toast(`摘要失败：${esc(err.message)}`);
+  }
+});
+
+$("#btn-rewrite").addEventListener("click", async () => {
+  if (!S.current) return;
+  if (S.current.rewritten_title) { renderReader(); toast("已重写为中性标题"); return; }
+  const btn = $("#btn-rewrite");
+  btn.classList.add("busy"); btn.disabled = true;
+  try {
+    const d = await api(`/api/articles/${S.current.id}/rewrite-title`, { method: "POST" });
+    S.current.rewritten_title = d.rewritten_title;
+    const li = S.articles.find((x) => x.id === S.current.id);
+    if (li) li.rewritten_title = d.rewritten_title;   // list view picks it up too
+    renderReader();
+    toast(d.clickbait === false ? "原标题尚属中性，已给出规范版" : "已重写为中性标题");
+    renderUsage(); refreshState(false);
+  } catch (err) {
+    toast(`重写失败：${esc(err.message)}`);
+  } finally {
+    btn.classList.remove("busy"); btn.disabled = false;
   }
 });
 

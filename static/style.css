@@ -742,6 +742,12 @@ svg { display: block; }
 .ev-trend { font-size: 8.5px; font-weight: 800; margin-left: 1px; vertical-align: middle; }
 .ev-trend.up { color: var(--danger); }
 .ev-trend.down { color: var(--text-3); }
+.ev-item-sig { color: var(--accent); font-weight: 800; font-variant-numeric: tabular-nums; }
+.ev-tools { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 9px 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.ev-sig-label { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+.ev-sig-label b { color: var(--accent); font-variant-numeric: tabular-nums; }
+#ev-sig-range { flex: 1; min-width: 0; accent-color: var(--accent); }
+.ev-stat { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
 .ev-item-title { font-size: 13.5px; line-height: 1.45; color: var(--text); font-weight: 550; }
 .ev-item-title-en { font-size: 11px; line-height: 1.4; color: var(--text-3); }
 .ev-event-title { font-family: var(--font-text); font-size: 17px; font-weight: 650; line-height: 1.4; margin-bottom: 14px; text-wrap: pretty; }
@@ -868,6 +874,7 @@ mark.hl { background: var(--hl-bg); color: inherit; border-radius: 3px; padding:
 
 .reader-nav { display: flex; flex-direction: column; gap: 1px; margin-left: -4px; }
 .reader-title-en { margin-top: 10px; font-family: var(--font-prose); font-size: 15.5px; line-height: 1.5; color: var(--text-3); font-style: italic; }
+.rw-badge { display: inline-block; font-style: normal; font-size: 9.5px; font-weight: 800; padding: 1px 5px; margin-right: 6px; border-radius: 5px; color: var(--accent-ink); background: var(--bamboo); vertical-align: middle; }
 
 .summary-points { margin: 10px 0 0; padding: 0; list-style: none; }
 .summary-points li { position: relative; padding-left: 17px; margin-bottom: 7px; font-family: var(--font-serif-zh); font-size: 14.8px; line-height: 1.8; color: var(--text); }
