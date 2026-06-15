@@ -323,7 +323,7 @@ async def refresh_all(force: bool = False) -> int:
             semaphore = asyncio.Semaphore(config.FETCH_CONCURRENCY)
             async with httpx.AsyncClient(
                 timeout=config.FETCH_TIMEOUT,
-                follow_redirects=True,
+                follow_redirects=False,  # fetch_one follows hops manually w/ per-hop SSRF guard
                 headers={"User-Agent": config.USER_AGENT},
             ) as client:
 

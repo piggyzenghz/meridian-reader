@@ -59,7 +59,7 @@ def _upsert(conn, feed_id: int, lean: str, fact: str, note: str) -> None:
         "INSERT INTO source_bias (feed_id, lean, factuality, note, draft, updated_at)"
         " VALUES (?,?,?,?,1,?) ON CONFLICT(feed_id) DO UPDATE SET"
         " lean=excluded.lean, factuality=excluded.factuality, note=excluded.note,"
-        " updated_at=excluded.updated_at",
+        " updated_at=excluded.updated_at WHERE source_bias.draft=1",  # never clobber boss-confirmed rows
         (feed_id, lean, fact, note, int(time.time())))
 
 

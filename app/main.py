@@ -522,15 +522,19 @@ async def toggle_star(article_id: int) -> dict[str, Any]:
 @app.post("/api/articles/{article_id}/later", dependencies=[protected])
 async def toggle_later(article_id: int) -> dict[str, Any]:
     with db.get_db() as conn:
-        row = conn.execute("SELECT read_later FROM articles WHERE id=?",
+        row = conn.execute("SELECT read_later, triage_state FROM articles WHERE id=?",
                            (article_id,)).fetchone()
         if not row:
             raise HTTPException(404, "article not found")
         new_value = 0 if row["read_later"] else 1
-        # keep triage_state in step: later button flips later<->inbox
+        # this button only flips the inbox<->later axis. Turning later OFF must
+        # not clobber a shortlist/archive state set via the triage endpoint —
+        # only fall back to inbox when the article was actually in 'later'.
+        triage = "later" if new_value else ("inbox" if row["triage_state"] == "later"
+                                            else row["triage_state"])
         conn.execute("UPDATE articles SET read_later=?, triage_state=? WHERE id=?",
-                     (new_value, "later" if new_value else "inbox", article_id))
-    return {"read_later": bool(new_value), "triage": "later" if new_value else "inbox"}
+                     (new_value, triage, article_id))
+    return {"read_later": bool(new_value), "triage": triage}
 
 
 TRIAGE_STATES = ("inbox", "later", "shortlist", "archive")
@@ -835,7 +839,9 @@ async def rewrite_title(article_id: int) -> Any:
                                                engine=_engine_for("summary"))
     except Exception as exc:
         return _translate_error(exc)
-    new_title = (result["rewritten"] or article["title"]).strip()
+    # ' '.strip() == '' would store empty → cache guard (line above) fails forever
+    # and re-calls the LLM on every click. Fall back to the original title.
+    new_title = (result["rewritten"] or article["title"]).strip() or article["title"]
     with db.get_db() as conn:
         conn.execute("UPDATE articles SET rewritten_title=? WHERE id=?",
                      (new_title, article_id))
@@ -932,7 +938,8 @@ async def related_articles(article_id: int) -> dict[str, Any]:
         rows = conn.execute(
             f"""SELECT a.id, a.feed_id, a.link, a.title, a.title_zh, a.author,
                        a.published, a.summary, a.image, a.is_read, a.is_starred,
-                       a.read_later, a.progress, a.word_count, a.body_zh,
+                       a.read_later, a.progress, a.word_count, a.rewritten_title,
+                       a.triage_state, a.body_zh,
                        f.title AS feed_title, f.category,
                        COUNT(*) AS shared
                 FROM article_tags at
@@ -975,7 +982,7 @@ async def add_feed(body: FeedIn) -> dict[str, Any]:
     with db.get_db() as conn:
         feed = conn.execute("SELECT * FROM feeds WHERE id=?", (feed_id,)).fetchone()
     async with httpx.AsyncClient(
-        timeout=config.FETCH_TIMEOUT, follow_redirects=True,
+        timeout=config.FETCH_TIMEOUT, follow_redirects=False,  # fetch_one guards each hop
         headers={"User-Agent": config.USER_AGENT},
     ) as client:
         new_count = await fetcher.fetch_one(client, feed)
@@ -1146,7 +1153,7 @@ async def import_opml(body: OpmlIn) -> dict[str, Any]:
     # URLs already SSRF-checked; hydrate just fetches + grabs favicons.
     async def _hydrate() -> None:
         async with httpx.AsyncClient(
-            timeout=config.FETCH_TIMEOUT, follow_redirects=True,
+            timeout=config.FETCH_TIMEOUT, follow_redirects=False,  # fetch_one guards each hop
             headers={"User-Agent": config.USER_AGENT}) as client:
             for fid in added:
                 with db.get_db() as conn:

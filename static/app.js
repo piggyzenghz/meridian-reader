@@ -509,7 +509,9 @@ function evItemHtml(c) {
 function renderClusterList() {
   const box = $("#ev-list-items");
   if (!box) return;
-  const shown = EV.clusters.filter((c) => (c.significance || 0) >= EV.minSig);
+  let shown = EV.clusters.filter((c) => (c.significance || 0) >= EV.minSig);
+  if (EV.minSig > 0)   // slider engaged → rank by importance; default (0) keeps heat order
+    shown = shown.slice().sort((a, b) => (b.significance || 0) - (a.significance || 0));
   box.innerHTML = shown.length
     ? shown.map(evItemHtml).join("")
     : `<div class="ev-ph">没有重要性 ≥ ${EV.minSig} 的事件<br><span style="font-size:11px">拖低滑块看更多</span></div>`;
@@ -1502,7 +1504,7 @@ $("#btn-summary").addEventListener("click", async () => {
 
 $("#btn-rewrite").addEventListener("click", async () => {
   if (!S.current) return;
-  if (S.current.rewritten_title) { renderReader(); toast("已重写为中性标题"); return; }
+  if (S.current.rewritten_title) { toast("已重写为中性标题（已缓存）"); return; }  // already shown; re-render would corrupt TTS highlight
   const btn = $("#btn-rewrite");
   btn.classList.add("busy"); btn.disabled = true;
   try {
@@ -1570,6 +1572,8 @@ $("#btn-later").addEventListener("click", async () => {
   const listItem = S.articles.find((x) => x.id === S.current.id);
   if (listItem) { listItem.read_later = data.read_later; listItem.triage = data.triage; }
   S.state.later = Math.max(0, S.state.later + (data.read_later ? 1 : -1));
+  if (S.state.triage)   // renderNav reads tri.later ?? S.state.later → keep both in sync
+    S.state.triage.later = Math.max(0, (S.state.triage.later || 0) + (data.read_later ? 1 : -1));
   renderNav();
   toast(data.read_later ? "已加入稍后读 ⏰" : "已移出稍后读");
 });
@@ -2222,6 +2226,9 @@ document.addEventListener("keydown", (e) => {
     case "s": if (S.current) $("#btn-star").click(); break;
     case "l": if (S.current) $("#btn-later").click(); break;
     case "e": {   // archive (reader: current · list: selected row)
+      if (!readerOpen && listRows()[S.selectedIdx]?.classList.contains("event-card")) {
+        toast("请先展开事件卡片再归档"); break;   // event-card has no single article id
+      }
       const id = readerOpen ? S.current?.id : +(listRows()[S.selectedIdx]?.dataset.id || 0);
       const cur = readerOpen ? S.current : S.articles.find((x) => x.id === id);
       if (id) setTriage(id, cur?.triage === "archive" ? "inbox" : "archive");

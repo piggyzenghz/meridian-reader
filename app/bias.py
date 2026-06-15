@@ -43,12 +43,3 @@ def compute_distribution(leans: list[str]) -> dict[str, Any]:
                 blindspot.append(label)
     return {"dist": dist, "sources": known, "total": total,
             "unknown": counts.get("unknown", 0), "blindspot": blindspot}
-
-
-def summarize_for_cluster(conn, cluster_id: int) -> dict[str, Any]:
-    """Bias distribution for one cluster — one lean per distinct member source."""
-    rows = conn.execute(
-        "SELECT COALESCE(sb.lean,'unknown') AS lean FROM articles a "
-        "LEFT JOIN source_bias sb ON sb.feed_id=a.feed_id "
-        "WHERE a.cluster_id=? GROUP BY a.feed_id", (cluster_id,)).fetchall()
-    return compute_distribution([r["lean"] for r in rows])
