@@ -1621,6 +1621,59 @@ function navigateArticle(delta) {
 $("#btn-prev").addEventListener("click", () => navigateArticle(-1));
 $("#btn-next").addEventListener("click", () => navigateArticle(1));
 
+/* ── touch gestures (iOS Safari) ────────────────────────────────────────────
+   Reader: vertical over-scroll switches article — swipe UP at the bottom → next,
+   swipe DOWN at the top → previous (boundary-aware so normal in-article scrolling
+   is untouched; short articles that don't scroll switch on any vertical swipe).
+   Swipe RIGHT → 上一级 (close reader / step back in the Events drill-in). All
+   passive (never blocks native scroll); ignores multi-touch + text selection. */
+(function setupTouchGestures() {
+  const SWIPE = 65, DOMINANCE = 1.5;   // min px + one axis must clearly dominate
+
+  const reader = $("#reader");
+  let rx = null, ry = 0, rt = 0, atTop = false, atBot = false;
+  reader.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) { rx = null; return; }
+    rx = e.touches[0].clientX; ry = e.touches[0].clientY; rt = Date.now();
+    const sc = $("#reader-scroll");
+    atTop = sc.scrollTop <= 4;
+    atBot = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4;
+  }, { passive: true });
+  reader.addEventListener("touchend", (e) => {
+    if (rx == null || !reader.classList.contains("open")) { rx = null; return; }
+    const t = e.changedTouches[0];
+    const dx = t.clientX - rx, dy = t.clientY - ry, dt = Date.now() - rt;
+    rx = null;
+    if (String(window.getSelection() || "")) return;   // don't fight text selection
+    const ax = Math.abs(dx), ay = Math.abs(dy);
+    if (ax > SWIPE && ax > ay * DOMINANCE && dt < 800) {
+      if (dx > 0) closeReader();                         // → 上一级
+    } else if (ay > SWIPE && ay > ax * DOMINANCE) {
+      if (dy < 0 && atBot) navigateArticle(1);           // swipe up at bottom → next
+      else if (dy > 0 && atTop) navigateArticle(-1);     // swipe down at top → prev
+    }
+  }, { passive: true });
+
+  // Events mobile drill-in: swipe right steps up a level (正文→各家报道→事件列表)
+  const list = $("#list");
+  let lx = null, ly = 0;
+  list.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) { lx = null; return; }
+    lx = e.touches[0].clientX; ly = e.touches[0].clientY;
+  }, { passive: true });
+  list.addEventListener("touchend", (e) => {
+    if (lx == null) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - lx, dy = t.clientY - ly;
+    lx = null;
+    if (dx > SWIPE && dx > Math.abs(dy) * DOMINANCE) {
+      const ev3 = $(".ev3");
+      if (ev3 && ev3.classList.contains("has-article")) evBack("reports");
+      else if (ev3 && ev3.classList.contains("has-cluster")) evBack("list");
+    }
+  }, { passive: true });
+})();
+
 /* ── TTS: read aloud with word-level highlight (SpeechSynthesis) ── */
 const tts = { utter: null, rate: 1, spans: [], lastMark: null, gen: 0 };
 function ttsSupported() { return "speechSynthesis" in window; }
