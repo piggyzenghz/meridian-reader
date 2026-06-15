@@ -188,6 +188,12 @@ def init_db() -> None:
             except sqlite3.OperationalError as exc:
                 if "duplicate column name" not in str(exc):
                     raise  # only swallow the already-applied case, surface real errors
+        # one-time triage backfill: existing read_later=1 articles → 'later' state
+        # (meta-guarded so it runs once, not a full-table scan every startup).
+        if not db.execute("SELECT 1 FROM meta WHERE key='triage_backfilled'").fetchone():
+            db.execute("UPDATE articles SET triage_state='later'"
+                       " WHERE read_later=1 AND triage_state='inbox'")
+            db.execute("INSERT OR REPLACE INTO meta (key,value) VALUES ('triage_backfilled','1')")
         seeded = db.execute("SELECT value FROM meta WHERE key='seeded'").fetchone()
         if not seeded:
             now = int(time.time())

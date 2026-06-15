@@ -15,6 +15,7 @@ const S = {
   selectedIdx: -1,
   titleTrans: localStorage.getItem("m.titles") === "1",
   groupEvents: localStorage.getItem("m.group") !== "0",  // Story Collapse (default on)
+  swipeRead: localStorage.getItem("m.swipe") === "1",    // mark-read-on-scroll (default off)
   theme: localStorage.getItem("m.theme") || "dark",
   pollTimer: 0,
 };
@@ -201,7 +202,7 @@ function jumpTag(tag) {
     Object.assign(S.view, { tag: "", q: "" });
   } else {
     Object.assign(S.view, { mode: "list", tag, monitor: "", q: "" });
-    if (["starred", "later"].includes(S.view.filter)) S.view.filter = "all";
+    if (["starred", "later", "shortlist", "archive"].includes(S.view.filter)) S.view.filter = "all";
   }
   syncFilterSeg(); switchView(); closeSidebar();
 }
@@ -226,7 +227,7 @@ function renderMonitors() {
 
 function jumpMonitor(query) {
   Object.assign(S.view, { mode: "list", category: "", feedId: 0, tag: "", monitor: query, q: "" });
-  if (["starred", "later"].includes(S.view.filter)) S.view.filter = "all";
+  if (["starred", "later", "shortlist", "archive"].includes(S.view.filter)) S.view.filter = "all";
   syncFilterSeg(); switchView(); closeSidebar();
 }
 
@@ -263,7 +264,7 @@ function navItem({ key, en, zh, count, color, feedId }) {
   const active = feedId
     ? (S.view.mode === "list" && S.view.feedId === feedId)
     : (S.view.mode === "list" && !S.view.feedId && S.view.category === key &&
-       !["starred", "later"].includes(S.view.filter));
+       !["starred", "later", "shortlist", "archive"].includes(S.view.filter));
   return `<button class="nav-item ${active ? "active" : ""}" ${active ? 'aria-current="true"' : ""}
     data-cat="${key}" ${feedId ? `data-feed="${feedId}"` : ""}
     style="--cat:${color || "var(--accent)"}">
@@ -294,8 +295,10 @@ function renderNav() {
   html += navItem({ key: "", en: "Today", zh: "全部", count: total, color: "var(--accent)" });
   for (const cat of S.state.categories)
     html += navItem({ key: cat, en: CAT_LABEL[cat][0], zh: CAT_LABEL[cat][1], count: u[cat] || 0, color: CAT_VAR[cat] });
-  html += iconNavItem({ filter: "later", icon: "i-clock", en: "Later", zh: "稍后读", count: S.state.later, color: "var(--c-world)" });
+  const tri = S.state.triage || {};
+  html += iconNavItem({ filter: "later", icon: "i-clock", en: "Later", zh: "稍后读", count: tri.later ?? S.state.later, color: "var(--c-world)" });
   html += iconNavItem({ filter: "starred", icon: "i-star", en: "Starred", zh: "收藏", count: S.state.starred, color: "var(--accent)", fill: true });
+  html += iconNavItem({ filter: "archive", icon: "i-checkall", en: "Archive", zh: "归档", count: tri.archive || 0, color: "var(--text-3)" });
   html += iconNavItem({ mode: "highlights", icon: "i-marker", en: "Highlights", zh: "高亮", count: S.state.highlights, color: "var(--c-tech)" });
   $("#nav-cats").innerHTML = html;
 }
@@ -334,7 +337,7 @@ $("#sidebar").addEventListener("click", (e) => {
     if (feed) S.view.category = feed.category;
   } else {
     Object.assign(S.view, { mode: "list", category: btn.dataset.cat, feedId: 0, tag: "", monitor: "", q: "" });
-    if (["starred", "later"].includes(S.view.filter)) S.view.filter = "all";
+    if (["starred", "later", "shortlist", "archive"].includes(S.view.filter)) S.view.filter = "all";
   }
   syncFilterSeg();
   switchView();
@@ -356,6 +359,8 @@ function viewTitle() {
   }
   if (S.view.filter === "starred") return "Starred";
   if (S.view.filter === "later") return "Read Later";
+  if (S.view.filter === "shortlist") return "Shortlist";
+  if (S.view.filter === "archive") return "Archive";
   if (S.view.category) return CAT_LABEL[S.view.category]?.[0] || S.view.category;
   return "Today";
 }
@@ -983,6 +988,36 @@ function renderList() {
   }
   $("#list").innerHTML = html;
   $("#list-end").classList.toggle("hidden", !!S.nextBefore);
+  observeSwipe();
+}
+
+// mark an article read (server + local + UI), reused by openArticle's auto-read
+// and the swipe-read observer. No-op if already read or unknown.
+function markReadById(id) {
+  const a = S.articles.find((x) => x.id === id);
+  if (!a || a.is_read) return;
+  a.is_read = true;
+  api(`/api/articles/${id}/read`, { method: "POST", body: { value: true } }).catch(() => {});
+  markItemRead(id);
+  decUnread(a);
+}
+
+// swipe-read: when enabled, mark an item read once it scrolls above the list top
+const swipeObserver = new IntersectionObserver((entries) => {
+  if (!S.swipeRead) return;
+  for (const e of entries) {
+    if (!e.isIntersecting && e.boundingClientRect.top < (e.rootBounds ? e.rootBounds.top : 0)) {
+      const id = +(e.target.dataset.id || 0);
+      swipeObserver.unobserve(e.target);
+      if (id) markReadById(id);
+    }
+  }
+}, { root: $("#list-wrap"), threshold: 0 });
+function observeSwipe() {
+  if (!S.swipeRead) return;
+  $$("#list > .item, #list .ec-members .item").forEach((el) => {
+    if (!el.classList.contains("read")) swipeObserver.observe(el);
+  });
 }
 
 $("#list").addEventListener("click", async (e) => {
@@ -1087,6 +1122,14 @@ $("#btn-group").addEventListener("click", () => {
   $("#btn-group").classList.toggle("on", S.groupEvents);
   S.selectedIdx = -1;   // row set changed — start j/k fresh
   renderList();
+});
+
+$("#btn-swiperead").addEventListener("click", () => {
+  S.swipeRead = !S.swipeRead;
+  localStorage.setItem("m.swipe", S.swipeRead ? "1" : "0");
+  $("#btn-swiperead").classList.toggle("on", S.swipeRead);
+  toast(S.swipeRead ? "划过即已读：开 — 滚过的条目自动标已读" : "划过即已读：关");
+  if (S.swipeRead) observeSwipe();
 });
 
 /* ── reader ──────────────────────────────────────── */
@@ -1307,6 +1350,7 @@ function renderReader() {
   $("#btn-retry-fulltext")?.addEventListener("click", loadFulltext);
   $("#ask-form")?.addEventListener("submit", askArticle);
   $("#btn-later").classList.toggle("active", !!a.read_later);
+  syncTriageButtons();
   applyHighlights();
   renderRelated();  // re-append related (survives full-text/translate re-renders)
   if (a.progress > 8 && a.progress < 96 && !S.restoredScroll) {
@@ -1506,12 +1550,43 @@ $("#btn-later").addEventListener("click", async () => {
   if (!S.current) return;
   const data = await api(`/api/articles/${S.current.id}/later`, { method: "POST" });
   S.current.read_later = data.read_later;
+  S.current.triage = data.triage;
   $("#btn-later").classList.toggle("active", data.read_later);
   const listItem = S.articles.find((x) => x.id === S.current.id);
-  if (listItem) listItem.read_later = data.read_later;
+  if (listItem) { listItem.read_later = data.read_later; listItem.triage = data.triage; }
   S.state.later = Math.max(0, S.state.later + (data.read_later ? 1 : -1));
   renderNav();
   toast(data.read_later ? "已加入稍后读 ⏰" : "已移出稍后读");
+});
+
+const TRIAGE_TOAST = { inbox: "移回收件箱", later: "已加入稍后读 ⏰",
+                       shortlist: "已加入精选 ★", archive: "已归档" };
+// move an article to a triage state (by id, works from list or reader)
+async function setTriage(id, state) {
+  if (!id) return;
+  try {
+    const data = await api(`/api/articles/${id}/triage`, { method: "POST", body: { state } });
+    const apply = (o) => { if (o) { o.triage = data.triage; o.read_later = data.read_later; } };
+    apply(S.articles.find((x) => x.id === id));
+    if (S.current && S.current.id === id) { apply(S.current); syncTriageButtons(); }
+    toast(TRIAGE_TOAST[state] || "已更新");
+    refreshState(false);   // refresh triage counts/nav
+    // if the moved row no longer belongs to the current filter view, drop it
+    const f = S.view.filter;
+    if ((f === "later" || f === "shortlist" || f === "archive") && data.triage !== f) {
+      S.articles = S.articles.filter((x) => x.id !== id);
+      const el = $(`#list .item[data-id="${id}"]`); if (el) el.remove();
+    } else if (f !== "archive" && data.triage === "archive") {
+      S.articles = S.articles.filter((x) => x.id !== id);   // archived → leave main views
+      const el = $(`#list .item[data-id="${id}"]`); if (el) el.remove();
+    }
+  } catch (err) { toast(`操作失败：${esc(err.message)}`); }
+}
+function syncTriageButtons() {
+  $("#btn-archive")?.classList.toggle("active", S.current?.triage === "archive");
+}
+$("#btn-archive")?.addEventListener("click", () => {
+  if (S.current) setTriage(S.current.id, S.current.triage === "archive" ? "inbox" : "archive");
 });
 
 /* prev / next article */
@@ -1854,7 +1929,7 @@ const ACTIONS = [
 ];
 function jumpCat(c) {
   Object.assign(S.view, { mode: "list", category: c, feedId: 0, tag: "", monitor: "", q: "" });
-  if (["starred", "later"].includes(S.view.filter)) S.view.filter = "all";
+  if (["starred", "later", "shortlist", "archive"].includes(S.view.filter)) S.view.filter = "all";
   syncFilterSeg(); switchView();
 }
 
@@ -2131,6 +2206,12 @@ document.addEventListener("keydown", (e) => {
     }
     case "s": if (S.current) $("#btn-star").click(); break;
     case "l": if (S.current) $("#btn-later").click(); break;
+    case "e": {   // archive (reader: current · list: selected row)
+      const id = readerOpen ? S.current?.id : +(listRows()[S.selectedIdx]?.dataset.id || 0);
+      const cur = readerOpen ? S.current : S.articles.find((x) => x.id === id);
+      if (id) setTriage(id, cur?.triage === "archive" ? "inbox" : "archive");
+      break;
+    }
     case "b": if (S.current) $("#btn-translate").click(); break;
     case "p": if (S.current) $("#btn-listen").click(); break;
     case "r": manualRefresh(); break;
@@ -2157,4 +2238,5 @@ setInterval(() => {
 /* ── go ──────────────────────────────────────────── */
 $("#btn-titles").classList.toggle("on", S.titleTrans);
 $("#btn-group").classList.toggle("on", S.groupEvents);
+$("#btn-swiperead").classList.toggle("on", S.swipeRead);
 boot();

@@ -130,6 +130,12 @@ async def state() -> dict[str, Any]:
             "SELECT COUNT(*) AS n FROM articles WHERE is_starred=1").fetchone()["n"]
         later = conn.execute(
             "SELECT COUNT(*) AS n FROM articles WHERE read_later=1").fetchone()["n"]
+        triage = {"inbox": 0, "later": 0, "shortlist": 0, "archive": 0}
+        for r in conn.execute(   # unread-by-triage drives the triage tabs/nav badges
+            "SELECT triage_state, COUNT(*) AS n FROM articles WHERE is_read=0"
+            " GROUP BY triage_state").fetchall():
+            if r["triage_state"] in triage:
+                triage[r["triage_state"]] = r["n"]
         n_highlights = conn.execute(
             "SELECT COUNT(*) AS n FROM highlights").fetchone()["n"]
         # unread count per tag — drives the sidebar tag list, taxonomy order
@@ -163,6 +169,7 @@ async def state() -> dict[str, Any]:
             for t in config.TAXONOMY if tag_counts.get(t, 0) > 0]
     return {
         "later": later,
+        "triage": triage,
         "highlights": n_highlights,
         "tags": tags,
         "monitors": monitors,
@@ -222,8 +229,11 @@ def _article_filters(category: str, feed_id: int, filter: str, tag: str,
         where.append("a.is_read=0")
     elif filter == "starred":
         where.append("a.is_starred=1")
-    elif filter == "later":
-        where.append("a.read_later=1")
+    elif filter in ("inbox", "later", "shortlist", "archive"):
+        where.append("a.triage_state=?")
+        params.append(filter)
+    if filter in ("all", "unread"):   # archive = soft-delete: hide from the main firehose
+        where.append("a.triage_state!='archive'")
     if monitor:
         clause, mparams = _monitor_clause(monitor)
         where.append(f"({clause})")
@@ -499,9 +509,33 @@ async def toggle_later(article_id: int) -> dict[str, Any]:
         if not row:
             raise HTTPException(404, "article not found")
         new_value = 0 if row["read_later"] else 1
-        conn.execute("UPDATE articles SET read_later=? WHERE id=?",
-                     (new_value, article_id))
-    return {"read_later": bool(new_value)}
+        # keep triage_state in step: later button flips later<->inbox
+        conn.execute("UPDATE articles SET read_later=?, triage_state=? WHERE id=?",
+                     (new_value, "later" if new_value else "inbox", article_id))
+    return {"read_later": bool(new_value), "triage": "later" if new_value else "inbox"}
+
+
+TRIAGE_STATES = ("inbox", "later", "shortlist", "archive")
+
+
+class TriageIn(BaseModel):
+    state: str
+
+
+@app.post("/api/articles/{article_id}/triage", dependencies=[protected])
+async def set_triage(article_id: int, body: TriageIn) -> dict[str, Any]:
+    """Move an article between triage states. read_later is kept as a derived
+    mirror (=1 only for 'later') so the legacy later view/counter still work."""
+    if body.state not in TRIAGE_STATES:
+        raise HTTPException(422, "invalid triage state")
+    read_later = 1 if body.state == "later" else 0
+    with db.get_db() as conn:
+        row = conn.execute("SELECT 1 FROM articles WHERE id=?", (article_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "article not found")
+        conn.execute("UPDATE articles SET triage_state=?, read_later=? WHERE id=?",
+                     (body.state, read_later, article_id))
+    return {"triage": body.state, "read_later": bool(read_later)}
 
 
 class ProgressIn(BaseModel):
