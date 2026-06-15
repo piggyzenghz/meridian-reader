@@ -350,20 +350,20 @@ async def refresh_all(force: bool = False) -> int:
 async def refresh_loop() -> None:
     """Background task started from app lifespan. With adaptive scheduling the
     loop wakes every SCHEDULER_TICK_MIN to fetch only due feeds, but the heavy
-    post-processing (tag / digest / cluster) runs only when new articles arrived
-    or at most once per FETCH_INTERVAL_MIN — so a 2-min fetch tick doesn't
-    re-embed/re-cluster the whole window every two minutes."""
+    post-processing (tag / digest / cluster) is batched to once per
+    FETCH_INTERVAL_MIN — clustering isn't real-time-critical, and recluster is
+    O(n²) at scale, so triggering it on every article trickle would peg the CPU
+    continuously. Articles fetched between heavy passes simply wait for the next."""
     from . import cluster, digest, tagger  # late import to avoid a cycle
     await asyncio.sleep(2)
     last_heavy = 0.0
     while True:
-        total = 0
         try:
-            total = await refresh_all()
+            await refresh_all()
         except Exception:
             log.exception("refresh loop iteration failed")
         now = time.time()
-        if total > 0 or (now - last_heavy) >= config.FETCH_INTERVAL_MIN * 60:
+        if (now - last_heavy) >= config.FETCH_INTERVAL_MIN * 60:
             last_heavy = now
             try:
                 await tagger.run_once()  # auto-tag newly fetched articles
