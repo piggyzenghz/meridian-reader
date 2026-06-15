@@ -115,14 +115,23 @@ _BOILERPLATE_P = re.compile(
     r"<p\b[^>]*>(?:(?!</p>).)*?"
     r"(?:appeared first on|this is today[’']s edition of)"
     r"(?:(?!</p>).)*?</p>", re.I | re.S)
+# feedx.net full-text mirror (界面新闻 / 联合早报 / WSJ中文) appends a promo footer:
+#   …<hr/>获取更多RSS：<a href="https://feedx.net">…</a> <a href="https://feedx.site">…</a>
+# always at the very end → strip from the marker (and any leading <hr>/<br>) onward.
+_FEEDX_FOOTER = re.compile(r"(?:\s|<br\s*/?>|<hr\s*/?>)*获取更多\s*RSS[：:].*$", re.S)
+_EMPTY_LIST = re.compile(r"<(ul|ol)\b[^>]*>\s*</\1>")          # leftover empty list
+_LEAD_DATE = re.compile(r"^\s*\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}\s*(?=<)")  # feedx 快讯 lead date stamp
 
 
 def _polish_rss_body(html: str) -> str:
     if not html:
         return html
+    html = _FEEDX_FOOTER.sub("", html)   # before others: removes the whole tail incl. its <hr>/links
     html = _ENGAGEMENT_SPANS.sub("", html)
     html = _XGO_LINK.sub("", html)
     html = _BOILERPLATE_P.sub("", html)
+    html = _EMPTY_LIST.sub("", html)
+    html = _LEAD_DATE.sub("", html)
     html = _EMPTY_ANCHOR.sub("", html)  # leftover image/video placeholder anchors
     return html.strip()
 

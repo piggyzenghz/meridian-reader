@@ -31,6 +31,7 @@ def _safe_url(value: str) -> bool:
 _IMG_SRC_BLOCKLIST = (
     "s.w.org/images/core/emoji",              # WordPress emoji sprites (e.g. 爱范儿)
     "media.npr.org/include/images/tracking",  # NPR RSS tracking pixel
+    "img.jiemian.com/101/original/2022",      # 界面 generic 2022 category placeholders (reused stock thumbs)
 )
 
 

@@ -128,8 +128,11 @@ PAYWALL_DOMAINS = (
 # france24.com is also here for a different reason: its page extraction returns
 # a Didomi cookie-consent wall (server-rendered, so the Jina proxy hits it too).
 # Skipping extraction falls back to the RSS body, which carries a real summary.
+# jiemian.com (界面新闻): the feedx full-text mirror already carries the complete
+# 快讯 in the RSS body — extracting the m.jiemian.com page only re-adds generic
+# 2022 stock thumbnails + 原文链接 chrome, so skip it like 华尔街见闻.
 NO_EXTRACT_DOMAINS = ("wallstreetcn.com", "awtmt.com", "x.com", "twitter.com",
-                      "france24.com")
+                      "france24.com", "jiemian.com")
 
 # Path fragments (any host) whose pages are video players or live-blogs:
 # extraction only scrapes the surrounding nav + related-video rail (BBC
