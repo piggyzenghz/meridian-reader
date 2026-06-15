@@ -29,6 +29,11 @@ W_DENSE, W_SPARSE, W_TIME = 0.60, 0.25, 0.15
 WINDOW_DAYS = 4                        # don't merge into clusters older than this
 SIGMA_DAYS = 1.5                       # temporal decay width
 RECENT_DAYS = 5                        # only cluster the last N days
+# recluster is O(articles × clusters) — at ~6k+ articles in the window it pegs a
+# core for 20+ min and GIL-starves the event loop. Events are recent, so cap to
+# the most-recent N articles (covers ~2.5 days at current volume); older in-window
+# articles simply aren't reclustered. Keeps recluster to a few minutes at scale.
+MAX_RECLUSTER = 3000
 EMBED_BATCH = 400                      # cap embeddings per incremental run
 MAX_MEMBERS = 80                       # backstop ceiling — the anchor gate is the real arbiter;
                                        # this only stops pathological runaway, not normal big events
@@ -109,7 +114,8 @@ def recluster() -> int:
         arts = [dict(r) for r in conn.execute(
             "SELECT id, title, published, feed_id, embedding FROM articles "
             "WHERE published>? AND embedding IS NOT NULL AND embedding!='' "
-            "ORDER BY published ASC", (cutoff,))]
+            "ORDER BY published DESC LIMIT ?", (cutoff, MAX_RECLUSTER))]
+        arts.reverse()   # streaming clusterer needs chronological (ASC) order
     clusters: list[dict] = []
     for a in arts:
         vec = _unpack(a["embedding"])
