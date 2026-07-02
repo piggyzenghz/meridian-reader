@@ -19,6 +19,7 @@ const S = {
   theme: localStorage.getItem("m.theme") || "dark",
   pollTimer: 0,
   modalOpen: false,       // uiPrompt/uiConfirm latch — suppresses global keydown while a self-drawn modal is up
+  feedStats: null,        // Map<feedId, statsRow> from /api/feeds/stats — lazy-loaded per settings open (M12 dashboard)
 };
 
 let progressTimer = 0, pendingProgress = -1;  // reader scroll-progress reporting
@@ -2164,8 +2165,25 @@ function openSettings() {
   renderFeedList();
   renderMuteList();
   renderEngines();
+  loadFeedStats();   // M12: pull per-feed health once per open; re-renders when it lands
 }
 function closeSettings() { $("#settings").classList.add("hidden"); }
+
+// M12 source dashboard: fetch /api/feeds/stats once per settings open, keyed by
+// feed id into S.feedStats. Best-effort — a failure degrades silently (feed-list
+// still renders, just without health badges). Re-renders once on success, but
+// only if the panel is still open (open→close race is harmless, just skipped).
+let _statsInFlight = false;
+async function loadFeedStats() {
+  if (_statsInFlight) return;   // throttle: one in-flight fetch per open is enough
+  _statsInFlight = true;
+  try {
+    const data = await api("/api/feeds/stats");
+    S.feedStats = new Map((data.feeds || []).map((f) => [f.id, f]));
+    if (!$("#settings").classList.contains("hidden")) renderFeedList();
+  } catch { /* silent degrade — no toast, no block */ }
+  finally { _statsInFlight = false; }
+}
 
 const ENGINE_FEATURES = [
   { key: "digest", name: "今日简报" },
@@ -2238,23 +2256,82 @@ $("#btn-add-feed").addEventListener("click", openSettings);
 $("#btn-close-settings").addEventListener("click", closeSettings);
 $("#settings").addEventListener("click", (e) => { if (e.target.id === "settings") closeSettings(); });
 
+// M12: tier → color-dot class. error_count wins (backoff/red) over tier hue.
+// fast=竹绿 / normal=中性 / slow=橙 / 有错误=红. Colors live in CSS (data-tier).
+function tierDotClass(st) {
+  if (st.error_count > 0) return "err";
+  return st.fetch_tier === "fast" ? "fast"
+    : st.fetch_tier === "slow" ? "slow" : "normal";
+}
+function tierDotTitle(st) {
+  const label = TIER_LABEL[st.fetch_tier] || st.fetch_tier || "未分级";
+  const gap = st.avg_gap ? ` · 约 ${fmtGap(st.avg_gap).replace(/^约 /, "")}一篇` : "";
+  return st.error_count > 0 ? `${label} · 抓取退避中${gap}` : `${label}${gap}`;
+}
+
+// M12: per-row health badges (right of the title). All values from S.feedStats;
+// nothing renders when stats haven't loaded (graceful pre-fetch race). Every
+// interpolated string is esc()'d — last_error especially (goes into title=).
+function feedBadges(st) {
+  if (!st) return "";
+  let b = "";
+  if (st.enabled && st.articles_total === 0)
+    b += `<span class="fl-badge zero" title="启用中但从未抓到文章 — 疑似失效源">零产出</span>`;
+  if (st.error_count > 0)
+    b += `<span class="fl-badge err" title="${esc(st.last_error || `连续失败 ${st.error_count} 次`)}">⚠${st.error_count}</span>`;
+  if (st.articles_7d > 0)
+    b += `<span class="fl-badge vol" title="近 7 天入库 ${st.articles_7d} 篇">7d·${st.articles_7d}</span>`;
+  return b;
+}
+
+// M12: health summary strip above the list. Counts computed live from stats;
+// tier / zero-output tallies only over enabled feeds (disabled has no rhythm).
+function feedSummaryHtml() {
+  if (!S.feedStats || !S.feedStats.size) return "";
+  let fast = 0, normal = 0, slow = 0, err = 0, zero = 0, vol7 = 0, total = 0;
+  for (const st of S.feedStats.values()) {
+    total++;
+    vol7 += st.articles_7d || 0;
+    if (st.error_count > 0) err++;
+    if (!st.enabled) continue;
+    if (st.articles_total === 0) zero++;
+    if (st.fetch_tier === "fast") fast++;
+    else if (st.fetch_tier === "slow") slow++;
+    else normal++;
+  }
+  const parts = [
+    `${total} 源`,
+    `<span class="fl-sum-dot fast"></span>活跃 ${fast}`,
+    `<span class="fl-sum-dot normal"></span>常规 ${normal}`,
+    `<span class="fl-sum-dot slow"></span>慢源 ${slow}`,
+  ];
+  if (err) parts.push(`<span class="fl-sum-hot">⚠ 错误 ${err}</span>`);
+  if (zero) parts.push(`<span class="fl-sum-hot zero">零产出 ${zero}</span>`);
+  parts.push(`7 天共 ${vol7} 篇`);
+  return `<div class="fl-summary">${parts.join('<span class="fl-sum-sep">·</span>')}</div>`;
+}
+
 function renderFeedList() {
-  let html = "";
+  let html = feedSummaryHtml();
   for (const cat of S.state.categories) {
     const feeds = S.state.feeds.filter((f) => f.category === cat);
     if (!feeds.length) continue;
     html += `<div class="feed-group-label" style="--cat:${CAT_VAR[cat]}">${CAT_LABEL[cat][0]} · ${CAT_LABEL[cat][1]}</div>`;
-    html += feeds.map((f) => `
+    html += feeds.map((f) => {
+      const st = S.feedStats?.get(f.id) || null;   // may be null before stats land or for brand-new feeds
+      const dot = st ? `<span class="fl-dot ${tierDotClass(st)}" title="${esc(tierDotTitle(st))}"></span>` : "";
+      return `
       <div class="feed-row" data-id="${f.id}">
         <button class="switch ${f.enabled ? "on" : ""}" data-act="toggle" title="${f.enabled ? "停用" : "启用"}"></button>
         <div class="feed-row-main">
-          <div class="feed-row-title">${esc(f.title || "(未命名)")}</div>
+          <div class="feed-row-title">${dot}<span class="fl-title-tx">${esc(f.title || "(未命名)")}</span><span class="fl-badges">${feedBadges(st)}</span></div>
           <div class="feed-row-url">${esc(f.url)}</div>
           ${f.error_count > 0 ? `<div class="feed-row-err">⚠ 连续失败 ${f.error_count} 次${f.last_error ? `：${esc(f.last_error.slice(0, 80))}` : ""}</div>` : ""}
           ${f.fetch_tier ? `<div class="feed-row-rhythm">${TIER_LABEL[f.fetch_tier] || f.fetch_tier} · 更新${fmtGap(f.avg_gap)} · 下次${fmtNext(f.next_fetch)}</div>` : ""}
         </div>
         <button class="icon-btn sm" data-act="del" title="删除"><svg><use href="#i-trash"/></svg></button>
-      </div>`).join("");
+      </div>`;
+    }).join("");
   }
   $("#feed-list").innerHTML = html;
 }
