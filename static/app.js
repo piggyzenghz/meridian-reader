@@ -308,7 +308,7 @@ function renderMonitors() {
       <svg><use href="#i-radar"/></svg>
       <span class="mon-name">${esc(m.query)}</span>
       ${m.unread ? `<span class="mon-count">${m.unread > 999 ? "999+" : Number(m.unread)}</span>` : ""}
-      <span class="mon-del" data-id="${m.id}" title="删除监控">✕</span>
+      <span class="mon-del" data-id="${m.id}" title="删除监控" role="button" tabindex="0" aria-label="删除监控「${esc(m.query)}」">✕</span>
     </button>`).join("");
 }
 
@@ -318,6 +318,11 @@ function jumpMonitor(query) {
   syncFilterSeg(); switchView(); closeSidebar();
 }
 
+$("#nav-monitors").addEventListener("keydown", (e) => {  // E1: ✕ is a span inside the nav button — needs its own key handling
+  if ((e.key !== "Enter" && e.key !== " ") || !e.target.matches?.(".mon-del")) return;
+  e.preventDefault(); e.stopPropagation();   // don't let Enter bubble to the outer button (would switch view too)
+  e.target.click();
+});
 $("#nav-monitors").addEventListener("click", async (e) => {
   const del = e.target.closest(".mon-del");
   if (del) {
@@ -508,7 +513,7 @@ function viewCacheClear() { _viewCache.clear(); }
 function digestItemHtml(item, big = false) {
   const links = (item.ids || []).map((id) => parseInt(id, 10))
     .filter((n) => Number.isInteger(n)).slice(0, 4).map((id) =>
-    `<span class="digest-link" data-id="${id}">↗</span>`).join("");
+    `<span class="digest-link" data-id="${id}" role="button" tabindex="0" aria-label="打开来源文章">↗</span>`).join("");
   return `<div class="digest-item ${big ? "digest-top" : ""}">
     <div class="digest-item-t">${esc(item.t)}<span class="digest-links">${links}</span></div>
     <div class="digest-item-s">${esc(item.s)}</div></div>`;
@@ -925,7 +930,7 @@ async function renderHighlightsView() {
           ${srcBadge(h.feed_title, h.feed_id)}<span>${esc(h.feed_title)}</span><span>·</span>
           <span>${esc((h.title_zh || h.title).slice(0, 50))}</span>
           <span>·</span><span>${fmtTime(h.created_at)}</span>
-          <span class="del" title="删除高亮">✕</span>
+          <span class="del" title="删除高亮" role="button" tabindex="0" aria-label="删除此高亮">✕</span>
         </div>
       </div>`).join("") + "</div>";
   } catch (err) {
@@ -1169,6 +1174,13 @@ $("#list").addEventListener("keydown", (e) => {
     ecHead.setAttribute("aria-expanded", ecHead.closest(".event-card").classList.toggle("expanded") ? "true" : "false");
     return;
   }
+  // keyboard-focusable spans (E1): forward to the click delegate so the
+  // existing handlers run unchanged. Keydown target IS the focused element.
+  if (e.target.matches?.(".digest-link, .hl-card .del")) {
+    e.preventDefault(); e.stopPropagation();   // Space must not scroll; Enter must not hit global shortcuts
+    e.target.click();
+    return;
+  }
   const item = e.target.closest?.(".item");
   if (item && e.target === item) {
     e.preventDefault(); e.stopPropagation();
@@ -1302,7 +1314,7 @@ function renderRelated() {
   const r = S.related;
   if (!S.current || !r || r.id !== S.current.id || !r.items.length) return;
   const html = `<div class="related"><div class="related-head"><svg><use href="#i-link2"/></svg>相关阅读</div>${
-    r.items.map((a) => `<div class="related-item" data-id="${a.id}">
+    r.items.map((a) => `<div class="related-item" data-id="${a.id}" role="button" tabindex="0" aria-label="${esc(a.title_zh || a.title)}">
       <span class="related-src" style="--cat:${CAT_VAR[a.category]}">${esc(a.feed_title)}</span>
       <span class="related-title">${esc(a.title_zh || a.title)}</span></div>`).join("")}</div>`;
   $("#reader-inner").insertAdjacentHTML("beforeend", html);
@@ -1542,6 +1554,11 @@ $("#reader-inner").addEventListener("click", (e) => {
   if (tag) { closeReader(); jumpTag(tag.dataset.tag); return; }
   const rel = e.target.closest(".related-item");
   if (rel) openArticle(+rel.dataset.id);
+});
+$("#reader-inner").addEventListener("keydown", (e) => {  // E1: related-item keyboard open
+  if ((e.key !== "Enter" && e.key !== " ") || !e.target.matches?.(".related-item")) return;
+  e.preventDefault(); e.stopPropagation();
+  e.target.click();
 });
 $("#btn-close-reader").addEventListener("click", closeReader);
 $("#scrim").addEventListener("click", () => { closeReader(); closeSidebar(); });
@@ -2158,7 +2175,9 @@ $("#palette").addEventListener("click", (e) => { if (e.target.id === "palette") 
 
 /* ── settings ────────────────────────────────────── */
 
+let _settingsPrevFocus = null;   // element to restore focus to when settings closes
 function openSettings() {
+  _settingsPrevFocus = document.activeElement;   // remember what opened it (usually #btn-settings)
   $("#settings").classList.remove("hidden");
   $("#feed-add-cat").innerHTML = S.state.categories.map((c) =>
     `<option value="${c}">${CAT_LABEL[c][0]} ${CAT_LABEL[c][1]}</option>`).join("");
@@ -2166,8 +2185,34 @@ function openSettings() {
   renderMuteList();
   renderEngines();
   loadFeedStats();   // M12: pull per-feed health once per open; re-renders when it lands
+  $("#btn-close-settings").focus();   // move focus into the panel (first stable focusable)
 }
-function closeSettings() { $("#settings").classList.add("hidden"); }
+function closeSettings() {
+  $("#settings").classList.add("hidden");
+  if (_settingsPrevFocus && document.contains(_settingsPrevFocus)) _settingsPrevFocus.focus();  // restore
+  _settingsPrevFocus = null;
+}
+
+// Focus trap for the settings modal. Always-mounted on document capture (mirrors the
+// uiModal handler's phase); early-returns when the panel is hidden. Esc is handled by
+// the global keydown (bubble). Only Tab wrapping lives here.
+// 🔴 Integration guard: uiConfirm/uiPrompt (uiModal, z-90) can be opened from inside
+// settings (z-80). uiModal's capture onKey only stopPropagation (not stopImmediate), so
+// this same-phase capture handler still fires. When a uiModal owns the keyboard we must
+// yield — otherwise both traps fight over Tab. S.modalOpen is that latch.
+document.addEventListener("keydown", (e) => {
+  if (S.modalOpen) return;   // uiModal owns the keyboard — its own capture handler does Tab/Esc/Enter
+  if ($("#settings").classList.contains("hidden")) return;   // panel closed — nothing to trap
+  if (e.key !== "Tab") return;
+  const box = $("#settings .modal-box");
+  const els = $$('input, button, select, a[href], [tabindex]:not([tabindex="-1"])', box)
+    .filter((el) => !el.disabled && el.offsetParent !== null);   // visible + enabled only
+  if (!els.length) return;
+  const first = els[0], last = els[els.length - 1];
+  if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}, true);
 
 // M12 source dashboard: fetch /api/feeds/stats once per settings open, keyed by
 // feed id into S.feedStats. Best-effort — a failure degrades silently (feed-list
