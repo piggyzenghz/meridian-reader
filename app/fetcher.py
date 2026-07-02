@@ -179,7 +179,9 @@ def parse_and_store(feed_id: int, body: bytes, conn: sqlite3.Connection) -> int:
     if parsed.bozo and not parsed.entries:
         raise ValueError(f"unparseable feed: {parsed.bozo_exception!r}")
     now = int(time.time())
+    prune_cutoff = now - config.KEEP_DAYS * 86400  # same line prune_articles deletes below
     inserted = 0
+    stale = 0  # entries whose publish date is already past the age-prune cutoff
     for entry in parsed.entries[:80]:
         guid = entry.get("id") or entry.get("link") or entry.get("title", "")
         if not guid:
@@ -194,6 +196,8 @@ def parse_and_store(feed_id: int, body: bytes, conn: sqlite3.Connection) -> int:
         summary = (_clean_text_field(strip_tags(entry.get("summary", ""))) or plain)[:360]
         title = _clean_text_field(strip_tags(entry.get("title", "")))[:500]
         published = min(_entry_timestamp(entry), now + 3600)  # clamp future spam
+        if published < prune_cutoff:
+            stale += 1
         cur = conn.execute(
             """INSERT OR IGNORE INTO articles
                (feed_id, guid, link, title, author, published, summary,
@@ -206,6 +210,20 @@ def parse_and_store(feed_id: int, body: bytes, conn: sqlite3.Connection) -> int:
             ),
         )
         inserted += cur.rowcount
+    # Surface silent zero-yield feeds: a 200 + valid XML that nonetheless lands
+    # nothing (all entries duplicates, or — the "live-looking dead feed" case —
+    # every item already older than KEEP_DAYS, so the prune at the end of
+    # refresh_all deletes them the same cycle they're inserted). error_count
+    # stays 0, so without this line these feeds look healthy while never growing.
+    n_entries = len(parsed.entries)
+    if n_entries and inserted == 0:
+        if stale == n_entries:
+            log.info("feed %d: parsed %d entries, ALL older than KEEP_DAYS "
+                     "(%dd) - nothing will survive prune", feed_id, n_entries,
+                     config.KEEP_DAYS)
+        else:
+            log.info("feed %d: parsed %d entries but stored 0 (all duplicates)",
+                     feed_id, n_entries)
     site_url = (parsed.feed.get("link") or "")[:2048]
     feed_title = strip_tags(parsed.feed.get("title", ""))[:200]
     conn.execute(
