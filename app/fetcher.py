@@ -318,6 +318,7 @@ async def refresh_all(force: bool = False) -> int:
         return 0
     async with _refresh_lock:
         refresh_state["running"] = True
+        t0 = time.perf_counter()
         try:
             now = int(time.time())
             with db.get_db() as conn:
@@ -349,8 +350,8 @@ async def refresh_all(force: bool = False) -> int:
                 db.set_meta(conn, "last_refresh", str(int(time.time())))
             refresh_state["last_run"] = int(time.time())
             refresh_state["last_new"] = total
-            log.info("refresh done: %d new articles across %d feeds",
-                     total, len(feeds))
+            log.info("refresh done: %d new articles across %d feeds in %.1fs",
+                     total, len(feeds), time.perf_counter() - t0)
             return total
         finally:
             refresh_state["running"] = False

@@ -1035,6 +1035,49 @@ async def delete_feed(feed_id: int) -> dict[str, Any]:
     return {"ok": True}
 
 
+@app.get("/api/feeds/stats", dependencies=[protected])
+async def feeds_stats() -> dict[str, Any]:
+    """Per-feed health aggregate for the source dashboard (R3/M12). Article
+    counts come from ONE grouped subquery joined to feeds (no per-feed N+1) —
+    the (feed_id, published) index serves the GROUP BY. Problem feeds float to
+    the top (error_count DESC, then 7d volume DESC)."""
+    with db.get_db() as conn:
+        rows = conn.execute(
+            """SELECT f.id, f.title, f.category, f.enabled, f.fetch_tier,
+                      f.avg_gap, f.next_fetch, f.last_fetched, f.error_count,
+                      f.last_error,
+                      COALESCE(ac.total, 0) AS articles_total,
+                      COALESCE(ac.recent, 0) AS articles_7d
+               FROM feeds f
+               LEFT JOIN (
+                   SELECT feed_id, COUNT(*) AS total,
+                          SUM(CASE WHEN created_at > strftime('%s','now')-604800
+                                   THEN 1 ELSE 0 END) AS recent
+                   FROM articles GROUP BY feed_id
+               ) ac ON ac.feed_id = f.id
+               ORDER BY f.error_count DESC, articles_7d DESC,
+                        f.title COLLATE NOCASE""").fetchall()
+    feeds = []
+    for row in rows:
+        feeds.append({
+            "id": row["id"],
+            "title": row["title"],
+            "category": row["category"],
+            "enabled": bool(row["enabled"]),
+            "fetch_tier": row["fetch_tier"],
+            "avg_gap": row["avg_gap"],
+            "next_fetch": row["next_fetch"],
+            "last_fetched": row["last_fetched"],
+            "error_count": row["error_count"],
+            # scrub the RSSHub ?key= (same as _public_feed) then cap payload size
+            "last_error": fetcher._scrub_url(row["last_error"])[:200]
+                          if row["last_error"] else "",
+            "articles_total": row["articles_total"],
+            "articles_7d": row["articles_7d"],
+        })
+    return {"feeds": feeds, "generated_at": int(time.time())}
+
+
 # ---------------------------------------------------------------- refresh
 
 @app.post("/api/refresh", dependencies=[protected])

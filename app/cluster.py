@@ -304,14 +304,25 @@ async def run_once() -> int:
     if _lock.locked():
         return 0
     async with _lock:
-        await embed_recent()
+        t0 = time.perf_counter()
+        embedded = await embed_recent()
+        t_embed = time.perf_counter()
         n = await asyncio.to_thread(recluster)
+        t_recluster = time.perf_counter()
+        scored = 0
         try:
-            await score_clusters()
+            scored = await score_clusters()
         except Exception:
             log.warning("score_clusters best-effort failed", exc_info=True)
+        t_score = time.perf_counter()
         try:
             await asyncio.to_thread(_snapshot_heat)   # build the heat trajectory
         except Exception:
             log.warning("heat snapshot failed", exc_info=True)
+        t_snap = time.perf_counter()
+        log.info(
+            "cluster pass: embed %d arts %.1fs | recluster %d clusters %.1fs | "
+            "score %d %.1fs | snapshot %.1fs | total %.1fs",
+            embedded, t_embed - t0, n, t_recluster - t_embed,
+            scored, t_score - t_recluster, t_snap - t_score, t_snap - t0)
         return n
