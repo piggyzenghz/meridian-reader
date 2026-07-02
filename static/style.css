@@ -694,6 +694,36 @@ svg { display: block; }
 .switch.on { background: color-mix(in srgb, var(--accent) 55%, var(--surface-2)); }
 .switch.on::after { transform: translateX(14px); background: #fff; }
 
+/* ── ui modal（uiPrompt / uiConfirm 自绘弹窗）───────── */
+.ui-modal {
+  position: fixed; inset: 0; z-index: 90;   /* 盖过 settings(80)，让位 toast(95) */
+  background: rgba(4, 5, 9, .5);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  display: grid; place-items: center; padding: 20px;
+  animation: fade-in .18s;
+}
+.ui-modal-box {
+  width: min(420px, 92vw);
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong); border-radius: 17px;
+  box-shadow: var(--shadow-lg);
+  padding: 21px 22px 18px;
+  animation: pop .28s var(--ease-spring);
+}
+.ui-modal-title { font-family: var(--font-display); font-weight: 600; font-size: 19px; letter-spacing: -.01em; margin-bottom: 9px; }
+.ui-modal-body { font-size: 13.5px; line-height: 1.65; color: var(--text-2); overflow-wrap: break-word; }
+.ui-modal-input {
+  width: 100%; margin-top: 4px;
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: 11px; padding: 10px 13px; font-size: 14px; color: var(--text);
+}
+.ui-modal-input:focus { outline: none; border-color: var(--accent); }
+.ui-modal-hint { font-size: 11.5px; line-height: 1.6; color: var(--text-3); margin-top: 8px; }
+.ui-modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 16px; }
+.ui-modal-ok.danger { background: var(--danger); color: var(--bg); }
+.ui-modal-ok.danger:hover { box-shadow: 0 6px 20px color-mix(in srgb, var(--danger) 35%, transparent); }
+
 /* ── toast ────────────────────────────────────────── */
 .toast-stack { position: fixed; top: 18px; right: 18px; z-index: 95; display: flex; flex-direction: column; gap: 9px; pointer-events: none; }
 .toast {

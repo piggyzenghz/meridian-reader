@@ -18,6 +18,7 @@ const S = {
   swipeRead: localStorage.getItem("m.swipe") === "1",    // mark-read-on-scroll (default off)
   theme: localStorage.getItem("m.theme") || "dark",
   pollTimer: 0,
+  modalOpen: false,       // uiPrompt/uiConfirm latch — suppresses global keydown while a self-drawn modal is up
 };
 
 let progressTimer = 0, pendingProgress = -1;  // reader scroll-progress reporting
@@ -141,6 +142,91 @@ function groupKey(ts) {
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+/* ── ui modal: uiPrompt / uiConfirm（替代原生 prompt/confirm）──────────
+   Promise 化自绘模态，单例 DOM 首次调用时创建。a11y：role=dialog +
+   aria-modal、焦点陷阱（Tab 首尾环绕）、Esc/遮罩=取消、Enter=确认、
+   关闭后焦点还原到触发元素。打开期间置 S.modalOpen —— 全局 keydown
+   快捷键（j/k/e…）在入口 early-return，输入框打字不会误触。 */
+
+let _uiModalWrap = null, _uiModalClose = null;  // singleton overlay + active close (reentrancy guard)
+
+function uiModal({ title, body = "", hint = "", input = false, placeholder = "", danger = false, okText = "确定" }) {
+  return new Promise((resolve) => {
+    if (_uiModalClose) _uiModalClose();  // a second open cancels the first (belt & braces)
+    if (!_uiModalWrap) {
+      _uiModalWrap = document.createElement("div");
+      _uiModalWrap.id = "ui-modal";
+      _uiModalWrap.className = "ui-modal hidden";
+      _uiModalWrap.innerHTML = `<div class="ui-modal-box" role="dialog" aria-modal="true" aria-labelledby="ui-modal-title"></div>`;
+      document.body.appendChild(_uiModalWrap);
+    }
+    const wrap = _uiModalWrap, box = $(".ui-modal-box", wrap);
+    // 动态文本一律走 esc()（body 可含 feed.title 等用户数据）
+    box.innerHTML = `
+      <h3 class="ui-modal-title" id="ui-modal-title">${esc(title)}</h3>
+      ${body ? `<p class="ui-modal-body" id="ui-modal-body">${esc(body)}</p>` : ""}
+      ${input ? `<input class="ui-modal-input" type="text" maxlength="80" autocomplete="off" placeholder="${esc(placeholder)}" aria-label="${esc(title)}">` : ""}
+      ${hint ? `<div class="ui-modal-hint">${esc(hint)}</div>` : ""}
+      <div class="ui-modal-actions">
+        <button type="button" class="pill ghost ui-modal-cancel">取消</button>
+        <button type="button" class="pill ui-modal-ok${danger ? " danger" : ""}">${esc(okText)}</button>
+      </div>`;
+    if (body) box.setAttribute("aria-describedby", "ui-modal-body");
+    else box.removeAttribute("aria-describedby");
+
+    const inputEl = $(".ui-modal-input", box), okBtn = $(".ui-modal-ok", box), cancelBtn = $(".ui-modal-cancel", box);
+    const prevFocus = document.activeElement;
+    const cancelVal = input ? null : false;
+    const okVal = () => (input ? (inputEl.value.trim() || null) : true);  // 空串输入视为取消 → null
+    const openedAt = performance.now();
+    let settled = false;
+
+    const close = (result) => {
+      if (settled) return;
+      settled = true; _uiModalClose = null;
+      document.removeEventListener("keydown", onKey, true);
+      wrap.removeEventListener("click", onMask);
+      wrap.classList.add("hidden");
+      S.modalOpen = false;
+      if (prevFocus && document.contains(prevFocus)) prevFocus.focus();  // 焦点还原
+      resolve(result);
+    };
+    _uiModalClose = () => close(cancelVal);
+
+    const focusables = () => $$("input, button", box).filter((el) => !el.disabled);
+    const onKey = (e) => {  // capture 阶段独占键盘；global keydown 另有 S.modalOpen 门闩兜底
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(cancelVal); return; }
+      if (e.key === "Enter") {
+        if (e.target === cancelBtn) return;  // 焦点在取消上 → 原生 click 走取消
+        e.preventDefault(); e.stopPropagation();
+        if (performance.now() - openedAt < 150) return;  // 吃掉按住 Enter 的 key-repeat（防误触确认）
+        close(okVal());
+        return;
+      }
+      if (e.key === "Tab") {  // 焦点陷阱：首尾环绕；焦点跑出模态则拉回
+        const els = focusables();
+        if (!els.length) return;
+        const first = els[0], last = els[els.length - 1];
+        if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+        else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    };
+    const onMask = (e) => { if (e.target === wrap) close(cancelVal); };  // 点遮罩=取消
+
+    okBtn.addEventListener("click", () => close(okVal()));
+    cancelBtn.addEventListener("click", () => close(cancelVal));
+    wrap.addEventListener("click", onMask);
+    document.addEventListener("keydown", onKey, true);
+
+    S.modalOpen = true;
+    wrap.classList.remove("hidden");
+    (inputEl || okBtn).focus();  // prompt→输入框 / confirm→确认按钮
+  });
+}
+const uiPrompt = (opts) => uiModal({ ...opts, input: true });    // → Promise<string|null>（null=取消/空串）
+const uiConfirm = (opts) => uiModal({ ...opts, input: false });  // → Promise<boolean>
+
 /* ── auth ────────────────────────────────────────── */
 
 function showAuth() {
@@ -248,7 +334,11 @@ $("#nav-monitors").addEventListener("click", async (e) => {
 });
 
 $("#btn-add-monitor").addEventListener("click", async () => {
-  const q = prompt("监控一个关键词/话题（任何源里出现都会汇进来）：\n例如：英伟达、OpenAI、降息、某公司名");
+  const q = await uiPrompt({
+    title: "添加关键词监控",
+    hint: "任何源里出现该词都会汇进来 · 例如：英伟达、OpenAI、降息、某公司名",
+    placeholder: "输入关键词 / 话题…",
+  });
   if (!q || q.trim().length < 2) return;
   try {
     await api("/api/monitors", { method: "POST", body: { query: q.trim() } });
@@ -2180,7 +2270,12 @@ $("#feed-list").addEventListener("click", async (e) => {
     feed.enabled = !feed.enabled;
     renderFeedList(); renderFeeds();
   } else if (act === "del") {
-    if (!confirm(`删除订阅源「${feed.title}」？文章也会一并删除。`)) return;
+    const ok = await uiConfirm({
+      title: "删除订阅源",
+      body: `确定删除「${feed.title}」？该源下的文章也会一并删除，此操作不可撤销。`,
+      danger: true, okText: "删除",
+    });
+    if (!ok) return;
     await api(`/api/feeds/${id}`, { method: "DELETE" });
     S.state.feeds = S.state.feeds.filter((f) => f.id !== id);
     renderFeedList(); renderFeeds();
@@ -2245,6 +2340,7 @@ function moveSelection(delta) {
 }
 
 document.addEventListener("keydown", (e) => {
+  if (S.modalOpen) return;   // a self-drawn modal (uiPrompt/uiConfirm) owns the keyboard — its own capture handler does Esc/Tab/Enter
   const inInput = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
